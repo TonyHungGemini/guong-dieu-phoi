@@ -3,6 +3,10 @@
 Một ứng dụng quản lý giao việc gọn, trực quan cho tổ quản trị đang xây dựng App.
 Chạy hoàn toàn trên trình duyệt, không cần máy chủ, không cần bước build.
 
+**Bản chạy trực tuyến:** <https://tonyhunggemini.github.io/guong-dieu-phoi/>
+
+**Mã nguồn:** <https://github.com/TonyHungGemini/guong-dieu-phoi>
+
 ## Điểm chính
 
 - **Bảy không gian làm việc**: Tổng quan, Hôm nay, Bảng việc, Danh sách, Lịch, Đội ngũ, Báo cáo.
@@ -27,23 +31,22 @@ Sau đó mở <http://localhost:4173>.
 
 ## Đưa lên GitHub Pages
 
-1. Tạo repository mới trên GitHub, ví dụ `guong-task-board`.
-2. Tải toàn bộ thư mục này lên nhánh `main` (không cần đưa thư mục `.git` bên ngoài vào).
-3. Vào **Settings → Pages**.
-4. Ở **Build and deployment**, chọn **Deploy from a branch**.
-5. Chọn nhánh `main`, thư mục `/ (root)`, bấm **Save**.
-6. Chờ khoảng 1 phút, trang sẽ có tại `https://<tên-tài-khoản>.github.io/guong-task-board/`.
+Repo đã được tạo công khai tại <https://github.com/TonyHungGemini/guong-dieu-phoi> và bật GitHub Pages từ nhánh `main`, thư mục `/ (root)`. Mỗi lần cập nhật mã nguồn trên nhánh này, trang sẽ tự phát hành lại sau khoảng một phút.
 
-Nếu dùng dòng lệnh, từ thư mục dự án:
+Cách cập nhật bằng Git:
 
 ```bash
-git init
+git clone https://github.com/TonyHungGemini/guong-dieu-phoi.git
+cd guong-dieu-phoi
+# sao chép các tệp đã sửa từ thư mục dự án vào đây
 git add .
-git commit -m "GUỒNG - bàn điều phối dự án App"
-git branch -M main
-git remote add origin https://github.com/<tên-tài-khoản>/guong-task-board.git
-git push -u origin main
+git commit -m "Cập nhật GUỒNG"
+git push origin main
 ```
+
+Cũng có thể vào repo, chọn **Add file → Upload files**, kéo thả các tệp cần cập nhật rồi bấm **Commit changes**.
+
+Kiểm tra cấu hình tại **Settings → Pages**: nguồn là **Deploy from a branch**, nhánh `main`, thư mục `/ (root)`.
 
 Tệp `.nojekyll` đã có sẵn để GitHub Pages phục vụ đúng các tệp tĩnh.
 
