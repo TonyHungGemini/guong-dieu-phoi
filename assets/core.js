@@ -6,7 +6,8 @@
 
   const S = window.SEED;
   const App = (window.App = {});
-  const KEY = "guong.v1";
+  const KEY = "guong.v2";
+  const LEGACY_KEY = "guong.v1";
   const $ = (sel, root = document) => (root || document).querySelector(sel);
 
   const STATUS = {
@@ -159,9 +160,10 @@
   }
 
   /* ---------- chuẩn hoá dữ liệu ---------- */
-  const memberIds = new Set(S.members.map((m) => m.id));
   const wsIds = new Set(S.workstreams.map((w) => w.id));
   const labelSet = new Set(S.labels);
+  const memberColors = Array.isArray(S.memberColors) && S.memberColors.length ? S.memberColors : ["#D94A1E"];
+  const idPattern = /^[A-Za-z0-9_-]{1,64}$/;
 
   function cleanText(value, max) {
     return String(value == null ? "" : value).trim().slice(0, max || 4000);
@@ -170,8 +172,38 @@
     const dt = value ? new Date(value) : null;
     return dt && !Number.isNaN(dt.getTime()) ? dt.toISOString() : null;
   }
+  function cleanId(value) {
+    return typeof value === "string" && idPattern.test(value) ? value : null;
+  }
+  function initials(name) {
+    const words = cleanText(name, 60).split(/\s+/).filter(Boolean);
+    if (!words.length) return "?";
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+  }
+  function colorFor(value, index) {
+    const color = String(value || "");
+    return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : memberColors[index % memberColors.length];
+  }
+  function normalizeMember(raw, usedIds, index) {
+    if (!raw || typeof raw !== "object") return null;
+    const name = cleanText(raw.name, 60);
+    if (!name) return null;
+    let id = safeId(raw.id, "m");
+    while (usedIds.has(id)) id = uid("m");
+    usedIds.add(id);
+    const capacity = Number(raw.capacity);
+    return {
+      id,
+      name,
+      short: initials(name),
+      role: cleanText(raw.role, 60) || "Thành viên",
+      color: colorFor(raw.color, index),
+      capacity: Number.isFinite(capacity) ? clamp(Math.round(capacity), 1, 40) : 8,
+    };
+  }
 
-  function normalizeTask(raw, usedIds) {
+  function normalizeTask(raw, usedIds, memberIds) {
     if (!raw || typeof raw !== "object") return null;
     const title = cleanText(raw.title, 200);
     if (!title) return null;
@@ -202,7 +234,7 @@
     const comments = Array.isArray(raw.comments)
       ? raw.comments.slice(0, 300).map((cm) => ({
           id: safeId(cm && cm.id, "c"),
-          author: memberIds.has(cm && cm.author) ? cm.author : S.me,
+          author: cleanId(cm && cm.author),
           text: cleanText(cm && cm.text, 3000),
           at: cleanStamp(cm && cm.at) || new Date().toISOString(),
         })).filter((cm) => cm.text)
@@ -228,12 +260,28 @@
     };
   }
 
+  function normalizeMilestone(raw, usedIds) {
+    if (!raw || typeof raw !== "object") return null;
+    const title = cleanText(raw.title, 120);
+    const date = parseISO(raw.date);
+    if (!title || !date) return null;
+    let id = safeId(raw.id, "ms");
+    while (usedIds.has(id)) id = uid("ms");
+    usedIds.add(id);
+    return { id, title, note: cleanText(raw.note, 240), date };
+  }
+
   function normalizeState(raw) {
     if (!raw || typeof raw !== "object" || !Array.isArray(raw.tasks)) return null;
+    const usedMembers = new Set();
+    const members = Array.isArray(raw.members)
+      ? raw.members.slice(0, 200).map((item, index) => normalizeMember(item, usedMembers, index)).filter(Boolean)
+      : [];
+    const memberIds = new Set(members.map((m) => m.id));
     const used = new Set();
     const tasks = [];
     raw.tasks.slice(0, 3000).forEach((item) => {
-      const task = normalizeTask(item, used);
+      const task = normalizeTask(item, used, memberIds);
       if (task) tasks.push(task);
     });
     const taskIds = new Set(tasks.map((t) => t.id));
@@ -246,7 +294,7 @@
             id: safeId(item.id, "a"),
             type,
             taskId: taskIds.has(item.taskId) ? item.taskId : null,
-            memberId: memberIds.has(item.memberId) ? item.memberId : null,
+            memberId: cleanId(item.memberId),
             text: cleanText(item.text, 500),
             at: cleanStamp(item.at) || new Date().toISOString(),
           };
@@ -265,17 +313,24 @@
           };
         }).filter(Boolean)
       : [];
+    const usedMilestones = new Set();
+    const milestones = Array.isArray(raw.milestones)
+      ? raw.milestones.slice(0, 100).map((item) => normalizeMilestone(item, usedMilestones)).filter(Boolean)
+      : [];
     return {
-      version: 1,
+      version: 2,
       settings: {
         theme: settings.theme === "dark" ? "dark" : "light",
-        projectName: cleanText(settings.projectName, 80) || "App Quản trị v1.0",
+        projectName: cleanText(settings.projectName, 80) || "Dự án App",
         startDate: parseISO(settings.startDate) ? settings.startDate : todayISO(),
         createdAt: cleanStamp(settings.createdAt) || new Date().toISOString(),
+        ownerId: memberIds.has(settings.ownerId) ? settings.ownerId : (members[0] ? members[0].id : null),
       },
+      members,
       tasks,
       activity,
       focus,
+      milestones,
     };
   }
 
@@ -294,6 +349,11 @@
       state = null;
     }
     if (!state) {
+      try {
+        localStorage.removeItem(LEGACY_KEY);
+      } catch (err) {
+        /* trình duyệt chặn bộ nhớ — bản sạch vẫn chạy trong phiên này */
+      }
       state = normalizeState(S.create());
       persist(state);
     }
@@ -337,7 +397,10 @@
 
   /* ---------- tra cứu ---------- */
   App.members = function () {
-    return S.members;
+    return App.DATA.members;
+  };
+  App.memberColors = function () {
+    return memberColors.slice();
   };
   App.workstreams = function () {
     return S.workstreams;
@@ -346,13 +409,17 @@
     return S.labels;
   };
   App.memberById = function (id) {
-    return S.members.find((m) => m.id === id) || null;
+    return cleanId(id) ? App.DATA.members.find((m) => m.id === id) || null : null;
   };
   App.wsById = function (id) {
     return S.workstreams.find((w) => w.id === id) || null;
   };
+  App.meId = function () {
+    const id = cleanId(App.DATA.settings.ownerId);
+    return App.memberById(id) ? id : null;
+  };
   App.me = function () {
-    return App.memberById(S.me);
+    return App.memberById(App.meId());
   };
   App.taskById = function (id) {
     return App.DATA.tasks.find((t) => t.id === id) || null;
@@ -372,7 +439,7 @@
     else if (task.priority === "med") score += 11;
     if (task.status === "doing") score += 14;
     else if (task.status === "review") score += 9;
-    if (task.assignee === S.me) score += 6;
+    if (App.meId() && task.assignee === App.meId()) score += 6;
     if (!task.assignee) score += 3;
     if ((task.labels || []).includes("Ưu tiên tổ")) score += 9;
     return score;
@@ -550,9 +617,8 @@
     };
   };
   App.milestones = function () {
-    const start = App.DATA.settings.startDate || todayISO();
     const open = App.openTasks();
-    return S.milestones(start).map((m) => ({
+    return (App.DATA.milestones || []).map((m) => ({
       ...m,
       daysLeft: daysFromToday(m.date),
       past: m.date < todayISO(),
@@ -881,11 +947,11 @@
     const bar = document.getElementById("sideProg");
     if (bar) bar.style.width = `${progress}%`;
     const progressText = document.getElementById("sideProgText");
-    if (progressText) progressText.textContent = `${metrics.done}/${metrics.total} việc · ${progress}%`;
+    if (progressText) progressText.textContent = metrics.total ? `${metrics.done}/${metrics.total} việc · ${progress}%` : "Chưa có việc nào";
     const finalMs = App.finalMilestone();
     const days = document.getElementById("sideDays");
     if (days) {
-      if (!finalMs) days.textContent = "—";
+      if (!finalMs) days.textContent = "";
       else if (finalMs.daysLeft > 0) days.textContent = `còn ${finalMs.daysLeft} ngày`;
       else if (finalMs.daysLeft === 0) days.textContent = "về đích hôm nay";
       else days.textContent = `quá ${-finalMs.daysLeft} ngày`;
@@ -906,28 +972,39 @@
     const next = App.nextMilestone();
     const msTitle = document.getElementById("sideMsTitle");
     const msMeta = document.getElementById("sideMsMeta");
+    const msCard = document.getElementById("sideMilestone");
+    if (msCard) msCard.style.display = next || finalMs ? "" : "none";
     if (msTitle) msTitle.textContent = next ? next.title : "Đã chạm mọi mốc";
     if (msMeta) {
       if (next) msMeta.textContent = `${next.daysLeft === 0 ? "Hôm nay" : "Còn " + next.daysLeft + " ngày"} · ${fmtShort(next.date)}`;
-      else msMeta.textContent = "Tổ đã đi hết các mốc đã đặt";
+      else msMeta.textContent = finalMs ? "Tổ đã đi hết các mốc đã đặt" : "";
     }
     const stack = document.getElementById("sideTeamStack");
     if (stack) {
-      const members = S.members;
+      const members = App.members();
       const shown = members.slice(0, 5).map((m) => App.avatar(m, "avatar-sm")).join("");
       const more = members.length > 5 ? `<span class="more">+${members.length - 5}</span>` : "";
       stack.innerHTML = shown + more;
     }
     const teamText = document.getElementById("sideTeamText");
-    if (teamText) teamText.textContent = `${S.members.length} người · ${metrics.doing} đang làm`;
+    if (teamText) {
+      const count = App.members().length;
+      teamText.textContent = count ? `${count} người · ${metrics.doing} đang làm` : "Chưa có thành viên";
+    }
     const crumb = document.getElementById("crumbNow");
     if (crumb) crumb.textContent = VIEW_LABEL[App.view] || "Tổng quan";
     const avatar = document.getElementById("meAvatar");
     const me = App.me();
-    if (avatar && me) {
-      avatar.textContent = me.short;
-      avatar.style.setProperty("--who", me.color);
-      avatar.title = `${me.name} · ${me.role}`;
+    if (avatar) {
+      if (me) {
+        avatar.textContent = me.short;
+        avatar.style.setProperty("--who", me.color);
+        avatar.title = `${me.name} · ${me.role}`;
+      } else {
+        avatar.textContent = "?";
+        avatar.style.setProperty("--who", "var(--line-strong)");
+        avatar.title = "Chưa chọn bạn là ai · mở cài đặt";
+      }
     }
     syncThemeIcon();
     document.title = `${VIEW_LABEL[App.view] || "Tổng quan"} · GUỒNG — ${projectName}`;

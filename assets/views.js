@@ -84,6 +84,34 @@
     </div>`;
   }
 
+  function setupCard(members, m) {
+    const hasMembers = members.length > 0;
+    const hasTasks = m.total > 0;
+    const step = (done, title, text) => `<li class="setup-step${done ? " done" : ""}">
+      <span class="setup-dot">${done ? icon("check") : ""}</span>
+      <div><b>${esc(title)}</b><small>${esc(text)}</small></div>
+    </li>`;
+    return `<section class="card setup-card">
+      <div class="setup-main">
+        <div class="setup-eyebrow">${icon("spark")} Bắt đầu</div>
+        <h2 class="setup-title">${hasMembers ? "Giao việc đầu tiên." : "Thêm người vào tổ."}</h2>
+        <p class="setup-text">${hasMembers
+          ? `${members.length} người đã sẵn sàng. Tạo một việc, chọn người nhận và hẹn ngày để mở nhịp đầu tiên.`
+          : "Thêm tên, vai trò và năng lực tuần của từng người. Sau đó bạn có thể giao việc, lọc theo người và xem tải của tổ."}</p>
+        <div class="setup-actions">
+          ${hasMembers
+            ? `<button class="btn btn-accent" type="button" data-new-task>${icon("plus")} Giao việc đầu tiên</button>`
+            : `<button class="btn btn-accent" type="button" data-go="team">${icon("users")} Thêm thành viên</button>`}
+          <button class="btn btn-ghost" type="button" data-open-settings>${icon("download")} Cài ứng dụng</button>
+        </div>
+      </div>
+      <ol class="setup-steps">
+        ${step(hasMembers, "Thêm thành viên", "Tên, vai trò, năng lực tuần")}
+        ${step(hasTasks, "Giao việc đầu tiên", "Người nhận, hạn chót, ưu tiên")}
+      </ol>
+    </section>`;
+  }
+
   function dailySpark() {
     const today = A.todayISO();
     const days = [];
@@ -131,13 +159,22 @@
     const compareText = compare > 0 ? `+${compare} so với tuần trước` : compare === 0 ? "Ngang tuần trước" : `${compare} so với tuần trước`;
     const memberStats = A.members().map((x) => A.memberStats(x.id)).filter(Boolean).sort((a, b) => b.load - a.load);
     const overloaded = memberStats.filter((s) => s.load > 100);
+    const members = A.members();
 
-    const heroTitle = urgent > 0
-      ? `Chào ${esc(firstName)},<br>hôm nay chạm <span class="hl">${urgent} việc.</span>`
-      : `Hôm nay,<br>giữ <span class="hl">nhịp thật đều.</span>`;
-    const heroSub = m.overdue
-      ? `<b>${m.overdue} việc quá hạn</b> cần chốt sớm · <b>${m.dueToday} việc</b> đến hạn hôm nay · <b>${m.doing} việc</b> đang được giữ nhịp.`
-      : `<b>${m.dueToday} việc</b> đến hạn hôm nay · <b>${m.doing} việc</b> đang làm · <b>${doneToday.length} việc</b> đã gạch trong ngày.`;
+    const heroTitle = m.total === 0
+      ? (members.length
+        ? `Bàn đã sẵn,<br>giao <span class="hl">việc đầu tiên.</span>`
+        : `Bắt đầu<br>từ <span class="hl">người trong tổ.</span>`)
+      : urgent > 0
+        ? `Chào ${esc(firstName)},<br>hôm nay chạm <span class="hl">${urgent} việc.</span>`
+        : `Hôm nay,<br>giữ <span class="hl">nhịp thật đều.</span>`;
+    const heroSub = m.total === 0
+      ? (members.length
+        ? `<b>${members.length} người</b> đã sẵn sàng · <b>0 việc</b> trên bàn. Tạo việc đầu tiên để mở nhịp.`
+        : `<b>Thêm thành viên</b> để giao việc, tính tải và lọc theo người. Mọi dữ liệu nằm trên thiết bị này.`)
+      : m.overdue
+        ? `<b>${m.overdue} việc quá hạn</b> cần chốt sớm · <b>${m.dueToday} việc</b> đến hạn hôm nay · <b>${m.doing} việc</b> đang được giữ nhịp.`
+        : `<b>${m.dueToday} việc</b> đến hạn hôm nay · <b>${m.doing} việc</b> đang làm · <b>${doneToday.length} việc</b> đã gạch trong ngày.`;
 
     const hero = `<section class="hero" aria-label="Tóm tắt dự án">
       <div class="hero-main">
@@ -145,9 +182,13 @@
         <h1 class="hero-title">${heroTitle}</h1>
         <p class="hero-sub">${heroSub}</p>
         <div class="hero-actions">
-          <button class="btn btn-solid" type="button" data-go="today">${icon("sun")} Xem hôm nay</button>
+          ${m.total === 0
+            ? (members.length
+              ? `<button class="btn btn-solid" type="button" data-new-task>${icon("plus")} Giao việc đầu tiên</button>`
+              : `<button class="btn btn-solid" type="button" data-go="team">${icon("users")} Thêm thành viên</button>`)
+            : `<button class="btn btn-solid" type="button" data-go="today">${icon("sun")} Xem hôm nay</button>`}
           <button class="btn btn-line" type="button" data-go="board">${icon("board")} Mở bảng việc</button>
-          <button class="btn btn-line" type="button" data-new-task>${icon("plus")} Giao việc</button>
+          ${members.length && m.total > 0 ? `<button class="btn btn-line" type="button" data-new-task>${icon("plus")} Giao việc</button>` : ""}
         </div>
       </div>
       <div class="hero-side">
@@ -163,8 +204,7 @@
             </div>
           </div>
           <div class="ring-meta">
-            Đã xong <b>${m.done}/${m.total}</b> việc<br>
-            <span class="up">+${m.doneThisWeek}</span> việc trong tuần
+            ${m.total ? `Đã xong <b>${m.done}/${m.total}</b> việc<br><span class="up">+${m.doneThisWeek}</span> việc trong tuần` : "Chưa có việc nào<br>để đo tiến độ"}
           </div>
         </div>
         <div class="hero-spark">
@@ -175,11 +215,11 @@
       </div>
       <div class="hero-foot">
         <span class="hero-quote">“${esc(A.quoteOfDay())}”</span>
-        <button class="hero-ms" type="button" data-go="reports">
+        ${next ? `<button class="hero-ms" type="button" data-go="reports">
           <span class="micro">Mốc kế</span>
-          <strong>${next ? esc(next.title) : "Đã chạm mọi mốc"}</strong>
-          <span class="chip">${next ? (next.daysLeft === 0 ? "Hôm nay" : `Còn ${next.daysLeft} ngày`) : "Về đích"}</span>
-        </button>
+          <strong>${esc(next.title)}</strong>
+          <span class="chip">${next.daysLeft === 0 ? "Hôm nay" : `Còn ${next.daysLeft} ngày`}</span>
+        </button>` : ""}
       </div>
     </section>`;
 
@@ -190,6 +230,11 @@
       ${kpiCard(m.doneThisWeek, "Xong tuần này", compareText, "check-circle", "ok")}
     </div>`;
 
+    const priorityEmpty = m.total === 0
+      ? (members.length
+        ? A.empty("spark", "Bàn đang trống", "Tạo việc đầu tiên, chọn người nhận và hẹn ngày để mở nhịp.", `<button class="btn btn-accent btn-sm" type="button" data-new-task>${icon("plus")} Giao việc đầu tiên</button>`)
+        : A.empty("users", "Chưa có ai để giao việc", "Thêm thành viên vào tổ trước, rồi mọi việc sẽ có người nhận rõ ràng.", `<button class="btn btn-accent btn-sm" type="button" data-go="team">${icon("users")} Thêm thành viên</button>`))
+      : A.empty("check-circle", "Không còn việc gấp", "Danh sách đang sạch. Dành chút thời gian nhìn lại chặng vừa qua.");
     const priorityCard = `<section class="card dash-priorities">
       <div class="card-h">
         <div>
@@ -198,14 +243,14 @@
         </div>
         <button class="card-link" type="button" data-go="board">Tất cả ${icon("arrow-right")}</button>
       </div>
-      ${smart.length ? `<div class="prio-list">${smart.map(priorityRow).join("")}</div>` : A.empty("check-circle", "Không còn việc gấp", "Danh sách đang sạch. Dành chút thời gian nhìn lại chặng vừa qua.")}
+      ${smart.length ? `<div class="prio-list">${smart.map(priorityRow).join("")}</div>` : priorityEmpty}
       <div class="prio-card-foot">
         <span class="inline">${icon("spark")} ${doneToday.length} việc xong hôm nay</span>
         <button class="card-link" type="button" data-go="today">Mở hôm nay ${icon("arrow-right")}</button>
       </div>
     </section>`;
 
-    const msCard = `<section class="card card-ms dash-ms">
+    const msCard = msList.length ? `<section class="card card-ms dash-ms">
       <div class="card-h">
         <div>
           <div class="card-t"><span class="card-idx">02</span> Cột mốc dự án</div>
@@ -227,18 +272,18 @@
         <div class="ms-foot-top"><span>Tiến độ tổng</span><span>${m.done}/${m.total} · ${m.rate}%</span></div>
         <div class="ms-track"><i style="width:${m.rate}%"></i></div>
       </div>
-    </section>`;
+    </section>` : "";
 
     const streams = A.workstreams().map((ws) => A.wsStats(ws.id)).filter(Boolean);
     const streamsCard = `<section class="card dash-streams">
       <div class="card-h">
         <div>
-          <div class="card-t"><span class="card-idx">03</span> Nhịp các mảng</div>
+          <div class="card-t"><span class="card-idx">${msList.length ? "03" : "02"}</span> Nhịp các mảng</div>
           <div class="card-sub">Tỉ lệ hoàn thành · chạm để lọc danh sách.</div>
         </div>
         <button class="card-link" type="button" data-go="team">Đội ngũ ${icon("arrow-right")}</button>
       </div>
-      <div class="stream-list">
+      ${m.total ? `<div class="stream-list">
         ${streams.map((s) => `<button class="stream-row" type="button" data-ws-filter="${esc(s.ws.id)}" style="--ws:${esc(s.ws.color)}">
           <span class="ws-mark"></span>
           <span class="stream-body">
@@ -246,18 +291,18 @@
             <span class="stream-bar"><i style="width:${s.pct}%"></i></span>
           </span>
         </button>`).join("")}
-      </div>
+      </div>` : A.empty("layers", "Chưa có việc để chia mảng", "Mỗi việc mới sẽ được xếp vào một mảng để bạn nhìn được nhịp của từng phần.", `<button class="btn btn-ghost btn-sm" type="button" data-go="board">Mở bảng việc</button>`)}
     </section>`;
 
     const pulseCard = `<section class="card dash-pulse">
       <div class="card-h">
         <div>
-          <div class="card-t"><span class="card-idx">04</span> Tải của tổ</div>
+          <div class="card-t"><span class="card-idx">${msList.length ? "04" : "03"}</span> Tải của tổ</div>
           <div class="card-sub">Việc đang mở / năng lực.</div>
         </div>
         <button class="card-link" type="button" data-go="team">Xem ${icon("arrow-right")}</button>
       </div>
-      <div class="pulse-list">
+      ${memberStats.length ? `<div class="pulse-list">
         ${memberStats.map((s) => `<button class="pulse-row" type="button" data-member-filter="${esc(s.member.id)}">
           ${A.avatar(s.member, "avatar-sm")}
           <span class="pulse-main">
@@ -266,9 +311,9 @@
           </span>
           <span class="pulse-flag${s.load > 100 ? " on" : ""}"></span>
         </button>`).join("")}
-      </div>
+      </div>` : A.empty("users", "Tổ chưa có người", "Thêm thành viên để thấy tải của từng người ngay tại đây.", `<button class="btn btn-accent btn-sm" type="button" data-go="team">${icon("users")} Thêm thành viên</button>`)}
       <div class="pulse-note">${icon(overloaded.length ? "alert" : "spark")}
-        <span>${overloaded.length ? `${esc(overloaded[0].member.name)} đang vượt năng lực — cân nhắc san việc.` : `Tổ đang giữ ${m.open} việc mở, nhịp tải tương đối đều.`}</span>
+        <span>${!memberStats.length ? "Khi có người và việc, nhịp tải sẽ xuất hiện tại đây." : overloaded.length ? `${esc(overloaded[0].member.name)} đang vượt năng lực — cân nhắc san việc.` : `Tổ đang giữ ${m.open} việc mở, nhịp tải tương đối đều.`}</span>
       </div>
     </section>`;
 
@@ -276,7 +321,7 @@
     const actCard = `<section class="card dash-act">
       <div class="card-h">
         <div>
-          <div class="card-t"><span class="card-idx">05</span> Nhật ký tổ</div>
+          <div class="card-t"><span class="card-idx">${msList.length ? "05" : "04"}</span> Nhật ký tổ</div>
           <div class="card-sub">Cập nhật gần đây trên thiết bị này.</div>
         </div>
       </div>
@@ -284,7 +329,8 @@
       <div class="act-more"><button class="btn-link" type="button" data-go="reports">Xem báo cáo tuần ${icon("arrow-right")}</button></div>
     </section>`;
 
-    return `${hero}${kpis}<div class="dash-grid">${priorityCard}${msCard}${streamsCard}${pulseCard}${actCard}</div>`;
+    const setup = !members.length || m.total === 0 ? setupCard(members, m) : "";
+    return `${hero}${kpis}${setup}<div class="dash-grid${msList.length ? "" : " no-ms"}">${priorityCard}${msCard}${streamsCard}${pulseCard}${actCard}</div>`;
   };
 
   /* ============================================================
@@ -300,6 +346,7 @@
     const mm = Math.floor(A.focus.remaining / 60);
     const ss = A.focus.remaining % 60;
     const pct = A.focus.duration ? Math.round(((A.focus.duration - A.focus.remaining) / A.focus.duration) * 100) : 0;
+    const canFocus = open.length > 0;
     const options = open.slice(0, 20).map((t) => `<option value="${esc(t.id)}"${t.id === A.focus.taskId ? " selected" : ""}>${esc(t.title)}</option>`).join("");
     return `<section class="focus-card${A.focus.running ? " running" : ""}" data-focus-card>
       <div class="fc-head">
@@ -310,7 +357,7 @@
       <div class="fc-sub" data-focus-sub>${A.focus.running ? "Giữ một việc, để chuông sang một bên." : `Phiên ${A.focus.duration / 60} phút · không ngắt quãng.`}</div>
       <div class="fc-track"><i data-focus-fill style="width:${pct}%"></i></div>
       <div class="fc-task">
-        <select class="select" data-focus-task aria-label="Chọn việc để tập trung">
+        <select class="select" data-focus-task aria-label="Chọn việc để tập trung"${canFocus ? "" : " disabled"}>
           ${options || `<option value="">Chưa có việc để chọn</option>`}
         </select>
       </div>
@@ -318,9 +365,9 @@
         <div class="fc-presets">
           ${[15, 25, 45].map((min) => `<button class="fc-pill${A.focus.duration === min * 60 ? " on" : ""}" type="button" data-focus-preset="${min}">${min}′</button>`).join("")}
         </div>
-        <button class="fc-start" type="button" data-focus-toggle>
+        ${canFocus ? `<button class="fc-start" type="button" data-focus-toggle>
           ${icon(A.focus.running ? "pause" : "play")}<span data-focus-toggle-label>${A.focus.running ? "Tạm dừng" : A.focus.remaining < A.focus.duration && A.focus.remaining > 0 ? "Tiếp tục" : "Bắt đầu"}</span>
-        </button>
+        </button>` : `<button class="fc-start" type="button" data-new-task>${icon("plus")}<span>Tạo việc</span></button>`}
         <button class="fc-reset" type="button" data-focus-reset title="Đặt lại phiên" aria-label="Đặt lại phiên">${icon("reset")}</button>
       </div>
       <div class="fc-foot">

@@ -31,7 +31,7 @@
   function toggleTaskDone(id) {
     const task = A.taskById(id);
     if (!task) return;
-    const me = window.SEED.me;
+    const me = A.meId();
     if (task.status === "done") {
       task.status = task.prevStatus || "todo";
       task.prevStatus = null;
@@ -52,7 +52,7 @@
   function setTaskStatus(id, status) {
     const task = A.taskById(id);
     if (!task || !A.STATUS[status] || task.status === status) return;
-    const me = window.SEED.me;
+    const me = A.meId();
     const old = task.status;
     task.status = status;
     if (status === "done") {
@@ -77,7 +77,7 @@
     const member = A.memberById(memberId);
     if (!member) return;
     task.assignee = member.id;
-    A.log("note", task.id, window.SEED.me, `đã giao «${task.title}» cho ${member.name}`);
+    A.log("note", task.id, A.meId(), `đã giao «${task.title}» cho ${member.name}`);
     A.toast(`Đã giao việc cho ${member.name}.`, "success");
     A.refresh();
   }
@@ -158,7 +158,7 @@
       desc: "",
       status: A.STATUS[p.status] ? p.status : "todo",
       priority: A.PRIORITY[p.priority] ? p.priority : "med",
-      assignee: A.memberById(p.assignee) ? p.assignee : window.SEED.me,
+      assignee: A.memberById(p.assignee) ? p.assignee : (A.meId() || null),
       workstream: A.wsById(p.workstream) ? p.workstream : "w1",
       due: A.parseISO(p.due) ? p.due : A.todayISO(),
       estimate: null,
@@ -189,11 +189,12 @@
     const doneSubs = draft.subtasks.filter((s) => s.done).length;
     const subPct = draft.subtasks.length ? Math.round((doneSubs / draft.subtasks.length) * 100) : 0;
     const commentRows = draft.comments.map((comment) => {
-      const member = A.memberById(comment.author) || A.me();
+      const member = A.memberById(comment.author);
+      const authorName = member ? member.name : comment.author ? "Thành viên cũ" : "Bạn";
       return `<div class="comment-row">
         ${A.avatar(member, "avatar-sm")}
         <div class="comment-main">
-          <div class="comment-head"><span class="comment-name">${esc(member.name)}</span><span class="comment-time">${esc(A.timeAgo(comment.at))}</span></div>
+          <div class="comment-head"><span class="comment-name">${esc(authorName)}</span><span class="comment-time">${esc(A.timeAgo(comment.at))}</span></div>
           <div class="comment-text">${esc(comment.text)}</div>
         </div>
       </div>`;
@@ -229,6 +230,7 @@
           <div class="field">
             <label class="f-label" for="taskAssignee">Người nhận</label>
             <select class="select" id="taskAssignee" data-field="assignee">${assigneeSelect(draft)}</select>
+            ${!A.members().length ? `<div class="field-hint">Chưa có thành viên. Vào <b>Đội ngũ</b> để thêm người trước khi giao việc.</div>` : ""}
           </div>
           <div class="field">
             <label class="f-label" for="taskDue">Hạn chót</label>
@@ -441,7 +443,7 @@
     }
     A._taskDraft.comments.push({
       id: A.uid("c"),
-      author: window.SEED.me,
+      author: A.meId(),
       text,
       at: new Date().toISOString(),
     });
@@ -483,7 +485,7 @@
       links: draft.links.map((l) => ({ id: l.id || A.uid("l"), label: String(l.label || "").trim().slice(0, 120), url: A.safeUrl(l.url) })).filter((l) => l.url),
       comments: draft.comments.map((c) => ({
         id: c.id || A.uid("c"),
-        author: A.memberById(c.author) ? c.author : window.SEED.me,
+        author: A.memberById(c.author) ? c.author : null,
         text: String(c.text || "").trim().slice(0, 3000),
         at: c.at || new Date().toISOString(),
       })).filter((c) => c.text),
@@ -495,7 +497,7 @@
     if (isNew) {
       normalized.completedAt = status === "done" ? A.todayISO() : null;
       A.DATA.tasks.push(normalized);
-      A.log("add", normalized.id, window.SEED.me, `đã thêm việc «${title}»`);
+      A.log("add", normalized.id, A.meId(), `đã thêm việc «${title}»`);
       A.toast("Đã giao việc mới.", "success");
     } else {
       const oldStatus = original.status;
@@ -512,15 +514,15 @@
       Object.assign(original, normalized);
       if (oldStatus !== status) {
         if (status === "done") {
-          A.log("done", normalized.id, window.SEED.me, `đã hoàn thành «${title}»`);
+          A.log("done", normalized.id, A.meId(), `đã hoàn thành «${title}»`);
           A.confetti();
         } else {
-          A.log("move", normalized.id, window.SEED.me, `đã chuyển «${title}» sang ${A.STATUS[status].label}`);
+          A.log("move", normalized.id, A.meId(), `đã chuyển «${title}» sang ${A.STATUS[status].label}`);
         }
       } else if (newComments.length) {
-        A.log("note", normalized.id, window.SEED.me, `đã bình luận trong «${title}»`);
+        A.log("note", normalized.id, A.meId(), `đã bình luận trong «${title}»`);
       } else {
-        A.log("note", normalized.id, window.SEED.me, `đã cập nhật «${title}»`);
+        A.log("note", normalized.id, A.meId(), `đã cập nhật «${title}»`);
       }
       A.toast("Đã lưu thay đổi.", "success");
     }
@@ -667,21 +669,286 @@
   }
 
   /* ============================================================
+     THÀNH VIÊN
+     ============================================================ */
+  function memberInitials(name) {
+    const words = String(name || "").trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return "?";
+    if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+    return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+  }
+  function memberFormHTML(member) {
+    const isNew = !member;
+    const colors = A.memberColors();
+    const color = member ? member.color : colors[A.members().length % colors.length];
+    const name = member ? member.name : "";
+    const role = member ? member.role : "";
+    const capacity = member ? member.capacity : 8;
+    const note = isNew
+      ? (A.members().length ? "Người này có thể nhận việc ngay sau khi thêm." : "Bạn là người đầu tiên — tên này sẽ được chọn làm “Bạn” trong tổ.")
+      : "Những việc đang nhận vẫn giữ nguyên khi bạn đổi tên hoặc vai trò.";
+    return `<form class="modal modal-narrow member-form" id="memberForm" data-member-id="${member ? esc(member.id) : ""}" role="dialog" aria-modal="true" aria-labelledby="memberTitle">
+      <div class="modal-head">
+        <div>
+          <div class="modal-eyebrow">${icon("users")} ${isNew ? "Thành viên mới" : "Hồ sơ thành viên"}</div>
+          <div class="modal-title" id="memberTitle">${isNew ? "Thêm người vào tổ" : "Chỉnh thông tin"}</div>
+          <div class="modal-sub">${isNew ? "Chỉ cần tên và vai trò để bắt đầu giao việc." : "Tên, vai trò, màu nhận diện và năng lực tuần."}</div>
+        </div>
+        <button class="icon-btn modal-close" type="button" data-close-overlay aria-label="Đóng">${icon("x")}</button>
+      </div>
+      <div class="modal-body">
+        <div class="member-preview">
+          <span class="avatar avatar-lg" data-member-preview-avatar style="--who:${esc(color)}">${esc(memberInitials(name))}</span>
+          <div class="member-preview-main">
+            <b data-member-preview-name>${esc(name || "Tên thành viên")}</b>
+            <small data-member-preview-role>${esc(role || "Thành viên")} · ${capacity} việc/tuần</small>
+          </div>
+        </div>
+        <div class="field">
+          <label class="f-label" for="memberName">Tên hiển thị</label>
+          <input class="input" id="memberName" name="name" value="${esc(name)}" maxlength="60" placeholder="Ví dụ: Lan Hương" autocomplete="off">
+        </div>
+        <div class="meta-grid" style="margin-top:12px">
+          <div class="field">
+            <label class="f-label" for="memberRole">Vai trò</label>
+            <input class="input" id="memberRole" name="role" value="${esc(role)}" maxlength="60" placeholder="Thiết kế, Lập trình…" autocomplete="off">
+          </div>
+          <div class="field">
+            <label class="f-label" for="memberCapacity">Năng lực tuần (việc)</label>
+            <input class="input" id="memberCapacity" name="capacity" type="number" min="1" max="40" step="1" value="${capacity}" inputmode="numeric">
+          </div>
+        </div>
+        <div class="field" style="margin-top:12px">
+          <span class="f-label">Màu nhận diện</span>
+          <div class="member-colors">
+            ${colors.map((c) => `<button class="member-color${c === color ? " on" : ""}" type="button" data-member-color="${esc(c)}" style="--sw:${esc(c)}" aria-label="Chọn màu ${esc(c)}" aria-pressed="${c === color}"><span></span></button>`).join("")}
+          </div>
+          <input type="hidden" name="color" value="${esc(color)}">
+        </div>
+        <div class="settings-note" style="margin-top:14px">${icon("spark")}<span>${esc(note)}</span></div>
+      </div>
+      <div class="modal-foot">
+        <div>
+          ${member ? `<button class="btn btn-danger btn-sm" type="button" data-member-action="delete-member">${icon("trash")} Xoá khỏi tổ</button>` : `<span class="foot-note">Có thể sửa lại bất cứ lúc nào.</span>`}
+        </div>
+        <div class="foot-right">
+          <button class="btn btn-ghost" type="button" data-close-overlay>Huỷ</button>
+          <button class="btn btn-accent" type="submit">${icon("check")} ${isNew ? "Thêm vào tổ" : "Lưu thay đổi"}</button>
+        </div>
+      </div>
+    </form>`;
+  }
+  function openMember(id) {
+    if (A._overlays.length) A.closeAllOverlays();
+    const member = id ? A.memberById(id) : null;
+    if (id && !member) {
+      A.toast("Không tìm thấy thành viên này.", "error");
+      return;
+    }
+    A.openOverlay(memberFormHTML(member), { focus: "#memberName" });
+  }
+  A.openMember = openMember;
+
+  function updateMemberPreview() {
+    const form = document.getElementById("memberForm");
+    if (!form) return;
+    const name = String(form.elements.name.value || "").trim();
+    const role = String(form.elements.role.value || "").trim();
+    const capacity = A.clamp(Math.round(Number(form.elements.capacity.value) || 8), 1, 40);
+    const color = form.elements.color.value;
+    const avatar = form.querySelector("[data-member-preview-avatar]");
+    const nameEl = form.querySelector("[data-member-preview-name]");
+    const roleEl = form.querySelector("[data-member-preview-role]");
+    if (avatar) {
+      avatar.textContent = memberInitials(name);
+      avatar.style.setProperty("--who", color);
+    }
+    if (nameEl) nameEl.textContent = name || "Tên thành viên";
+    if (roleEl) roleEl.textContent = `${role || "Thành viên"} · ${capacity} việc/tuần`;
+  }
+
+  function saveMember(event) {
+    event.preventDefault();
+    const form = event.target;
+    const name = String(form.elements.name.value || "").trim().slice(0, 60);
+    if (!name) {
+      A.toast("Cần nhập tên thành viên.", "error");
+      form.elements.name.focus();
+      return;
+    }
+    const role = String(form.elements.role.value || "").trim().slice(0, 60) || "Thành viên";
+    const capacityRaw = Number.parseInt(form.elements.capacity.value, 10);
+    const capacity = Number.isFinite(capacityRaw) ? A.clamp(capacityRaw, 1, 40) : 8;
+    const rawColor = String(form.elements.color.value || "");
+    const color = /^#[0-9a-fA-F]{6}$/.test(rawColor) ? rawColor.toUpperCase() : A.memberColors()[0];
+    const id = form.dataset.memberId || "";
+    const editing = id ? A.memberById(id) : null;
+    if (id && !editing) {
+      A.toast("Thành viên này không còn tồn tại.", "error");
+      return;
+    }
+    const actor = A.meId();
+    if (editing) {
+      editing.name = name;
+      editing.short = memberInitials(name);
+      editing.role = role;
+      editing.capacity = capacity;
+      editing.color = color;
+      A.log("note", null, actor, `đã cập nhật hồ sơ ${name}`);
+      A.toast("Đã lưu thông tin thành viên.", "success");
+    } else {
+      const wasEmpty = !A.DATA.members.length;
+      const member = {
+        id: A.uid("m"),
+        name,
+        short: memberInitials(name),
+        role,
+        color,
+        capacity,
+      };
+      A.DATA.members.push(member);
+      if (!A.meId()) A.DATA.settings.ownerId = member.id;
+      A.log("add", null, actor, `đã thêm thành viên ${name}`);
+      A.toast(`Đã thêm ${name} vào tổ.`, "success");
+      if (wasEmpty) A.confetti();
+    }
+    A.closeAllOverlays();
+    A.save();
+    A.updateShell();
+    A.render({ animate: false });
+  }
+
+  function requestDeleteMember(memberId) {
+    const member = A.memberById(memberId);
+    if (!member) return;
+    const assigned = A.DATA.tasks.filter((t) => t.assignee === member.id);
+    const open = assigned.filter((t) => t.status !== "done");
+    const done = assigned.length - open.length;
+    const parts = [];
+    if (open.length) parts.push(`<b>${open.length} việc đang mở</b>`);
+    if (done) parts.push(`${done} việc đã xong`);
+    A.confirm({
+      title: `Xoá ${member.name} khỏi tổ?`,
+      message: assigned.length
+        ? `${parts.join(" và ")} sẽ chuyển về “Chưa giao”. Bình luận cũ vẫn được giữ làm dấu vết.`
+        : "Thành viên này chưa giữ việc nào. Hồ sơ sẽ bị xoá khỏi thiết bị này.",
+      note: "Không thể hoàn tác. Hãy xuất JSON trước nếu cần sao lưu.",
+      confirmLabel: "Xoá thành viên",
+      danger: true,
+    }, () => {
+      A.DATA.members = A.DATA.members.filter((m) => m.id !== member.id);
+      A.DATA.tasks.forEach((t) => {
+        if (t.assignee === member.id) t.assignee = null;
+      });
+      if (A.DATA.settings.ownerId === member.id) {
+        A.DATA.settings.ownerId = A.DATA.members[0] ? A.DATA.members[0].id : null;
+      }
+      if (A.listFilters.assignee === member.id) A.listFilters.assignee = "all";
+      if (A.boardFilters.assignee === member.id) A.boardFilters.assignee = "all";
+      A.closeAllOverlays();
+      A.save();
+      A.updateShell();
+      A.render({ animate: false });
+      A.toast("Đã xoá thành viên khỏi tổ.", "info");
+    });
+  }
+
+  function updateOwner(select) {
+    const member = A.memberById(select.value);
+    if (!member) return;
+    A.DATA.settings.ownerId = member.id;
+    A.save();
+    A.updateShell();
+    A.render({ animate: false });
+    A.toast(`Đã chọn ${member.name} là “Bạn”.`, "success");
+  }
+
+  /* ============================================================
+     CÀI ỨNG DỤNG (PWA)
+     ============================================================ */
+  function isStandalone() {
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+  }
+  async function promptInstall() {
+    const prompt = A._installPrompt;
+    if (!prompt) {
+      const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+      A.toast(ios ? "Trên iPhone: mở Safari → Chia sẻ → “Thêm vào Màn hình chính”." : "Mở menu trình duyệt → “Cài đặt ứng dụng” hoặc “Thêm vào màn hình chính”.", "info");
+      return;
+    }
+    prompt.prompt();
+    try {
+      await prompt.userChoice;
+    } catch (err) {
+      /* người dùng đóng hộp thoại cài đặt */
+    }
+    A._installPrompt = null;
+  }
+  function setupPWA() {
+    if ("serviceWorker" in navigator) {
+      const secure = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      if (secure) {
+        const register = () => navigator.serviceWorker.register("./sw.js").catch(() => {
+          /* PWA không khả dụng — ứng dụng vẫn chạy bình thường */
+        });
+        if (document.readyState === "complete") register();
+        else window.addEventListener("load", register, { once: true });
+      }
+    }
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      A._installPrompt = event;
+    });
+    window.addEventListener("appinstalled", () => {
+      A._installPrompt = null;
+      A.toast("Đã cài GUỒNG lên thiết bị.", "success");
+    });
+  }
+
+  /* ============================================================
      SETTINGS & DỮ LIỆU
      ============================================================ */
   function openSettings() {
     if (A._overlays.length) A.closeAllOverlays();
     const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+    const members = A.members();
+    const meId = A.meId();
+    const installed = isStandalone();
+    const ownerSection = members.length
+      ? `<select class="select" id="ownerSelect" aria-label="Chọn bạn trong tổ">
+          ${members.map((m) => `<option value="${esc(m.id)}"${m.id === meId ? " selected" : ""}>${esc(m.name)} · ${esc(m.role)}</option>`).join("")}
+        </select>
+        <div class="settings-desc">Việc của bạn được ưu tiên nhẹ trên bảng và nhật ký ghi đúng tên người thao tác.</div>`
+      : `<div class="settings-note">${icon("users")}<span>Chưa có thành viên nào. Thêm người vào tổ để chọn “Bạn” và bắt đầu giao việc.</span></div>
+        <div class="settings-actions"><button class="btn btn-ghost" type="button" data-add-member>${icon("plus")} Thêm thành viên</button></div>`;
+    const installSection = installed
+      ? `<div class="settings-sec">
+          <div class="settings-title">${icon("download")} Cài ứng dụng</div>
+          <div class="settings-note">${icon("check-circle")}<span>Bạn đang mở GUỒNG ở chế độ ứng dụng đã cài. Dữ liệu vẫn nằm trên thiết bị này.</span></div>
+        </div>`
+      : `<div class="settings-sec">
+          <div class="settings-title">${icon("download")} Cài ứng dụng</div>
+          <div class="settings-desc">Cài GUỒNG lên màn hình chính để mở nhanh và dùng khi mất mạng. Dữ liệu vẫn nằm trên thiết bị này.</div>
+          <div class="settings-actions">
+            <button class="btn btn-accent" type="button" data-install-app>${icon("download")} Cài ứng dụng</button>
+          </div>
+          <div class="settings-note">${icon("spark")}<span><b>iPhone / iPad:</b> mở bằng Safari → nút Chia sẻ → “Thêm vào Màn hình chính”.<br><b>Android:</b> menu ⋮ → “Cài đặt ứng dụng” hoặc “Thêm vào màn hình chính”.<br><b>Máy tính:</b> biểu tượng cài đặt trên thanh địa chỉ Chrome / Edge.</span></div>
+        </div>`;
     const html = `<div class="modal modal-narrow" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
       <div class="modal-head">
         <div>
           <div class="modal-eyebrow">${icon("settings")} Cài đặt</div>
           <div class="modal-title" id="settingsTitle">Bàn làm việc của bạn</div>
-          <div class="modal-sub">Tên dự án, giao diện và dữ liệu trên thiết bị này.</div>
+          <div class="modal-sub">Bạn là ai, giao diện, cài ứng dụng và dữ liệu trên thiết bị này.</div>
         </div>
         <button class="icon-btn modal-close" type="button" data-close-overlay aria-label="Đóng">${icon("x")}</button>
       </div>
       <div class="modal-body">
+        <div class="settings-sec">
+          <div class="settings-title">${icon("users")} Bạn trong tổ</div>
+          ${members.length ? `<label class="f-label" for="ownerSelect" style="margin-top:8px">Chọn tên của bạn</label>` : ""}
+          ${ownerSection}
+        </div>
         <div class="settings-sec">
           <div class="settings-title">${icon("layers")} Tên dự án</div>
           <label class="f-label" for="projectName" style="margin-top:8px">Hiển thị trên bàn điều phối</label>
@@ -702,17 +969,18 @@
             </button>
           </div>
         </div>
+        ${installSection}
         <div class="settings-sec">
           <div class="settings-title">${icon("download")} Dữ liệu của tổ</div>
-          <div class="settings-desc">Dữ liệu nằm trong trình duyệt này. Xuất tệp JSON để sao lưu hoặc chuyển sang máy khác.</div>
+          <div class="settings-desc">Dữ liệu chỉ nằm trong trình duyệt này, không tự đồng bộ giữa các máy. Xuất JSON để sao lưu hoặc chuyển sang máy khác.</div>
           <div class="settings-actions">
             <button class="btn btn-ghost" type="button" data-data-action="export-json">${icon("download")} Xuất JSON</button>
             <button class="btn btn-ghost" type="button" data-data-action="export-csv">${icon("download")} Xuất CSV</button>
             <button class="btn btn-ghost" type="button" data-data-action="import-json">${icon("upload")} Nhập JSON</button>
-            <button class="btn btn-danger" type="button" data-data-action="reset-demo">${icon("reset")} Dữ liệu mẫu</button>
+            <button class="btn btn-danger" type="button" data-data-action="reset-all">${icon("trash")} Xoá toàn bộ</button>
           </div>
           <input id="importFile" type="file" accept="application/json,.json" hidden>
-          <div class="settings-note">${icon("alert")}<span>Nhập JSON sẽ thay thế toàn bộ dữ liệu hiện tại. Hãy xuất bản sao lưu trước.</span></div>
+          <div class="settings-note">${icon("alert")}<span>Nhập JSON hoặc xoá dữ liệu sẽ thay thế toàn bộ nội dung hiện tại. Hãy xuất bản sao lưu trước.</span></div>
         </div>
         <div class="settings-sec">
           <div class="settings-title">${icon("command")} Phím tắt</div>
@@ -726,16 +994,16 @@
           </div>
         </div>
         <div class="settings-sec settings-about">
-          GUỒNG v1.0 · Bàn điều phối của tổ quản trị.<br>
-          Một sản phẩm tĩnh chạy trên GitHub Pages, không gửi dữ liệu ra ngoài.
+          GUỒNG v1.1 · Bàn điều phối của tổ quản trị.<br>
+          Ứng dụng tĩnh, chạy trên GitHub Pages, không gửi dữ liệu ra ngoài.
         </div>
       </div>
       <div class="modal-foot">
-        <span class="foot-note">Thay đổi tên dự án được lưu khi rời ô nhập.</span>
+        <span class="foot-note">Tên dự án được lưu khi rời ô nhập.</span>
         <div class="foot-right"><button class="btn btn-ink" type="button" data-close-overlay>Xong</button></div>
       </div>
     </div>`;
-    A.openOverlay(html, { focus: "#projectName" });
+    A.openOverlay(html, { focus: members.length ? "#ownerSelect" : "#projectName" });
   }
   A.openSettings = openSettings;
 
@@ -792,13 +1060,13 @@
       try {
         const parsed = JSON.parse(String(reader.result || ""));
         const wrapper = Array.isArray(parsed)
-          ? { version: 1, settings: A.DATA.settings, tasks: parsed, activity: [], focus: [] }
+          ? { version: 2, settings: A.DATA.settings, members: A.DATA.members, tasks: parsed, activity: [], focus: [], milestones: A.DATA.milestones }
           : parsed;
         const normalized = A.normalizeState(wrapper);
         if (!normalized) throw new Error("bad-shape");
         A.confirm({
           title: "Thay thế dữ liệu hiện tại?",
-          message: `Tệp có <b>${normalized.tasks.length} công việc</b>. Toàn bộ dữ liệu đang có trên thiết bị này sẽ bị thay thế.`,
+          message: `Tệp có <b>${normalized.tasks.length} công việc</b> và <b>${normalized.members.length} thành viên</b>. Toàn bộ dữ liệu đang có trên thiết bị này sẽ bị thay thế.`,
           note: "Hãy xuất JSON bản sao lưu trước nếu bạn chưa chắc.",
           confirmLabel: "Nhập dữ liệu",
           danger: true,
@@ -813,7 +1081,7 @@
           A.closeAllOverlays();
           A.updateShell();
           A.render({ animate: true });
-          A.toast(`Đã nhập ${normalized.tasks.length} công việc.`, "success");
+          A.toast(`Đã nhập ${normalized.tasks.length} công việc và ${normalized.members.length} thành viên.`, "success");
         });
       } catch (err) {
         A.toast("Tệp JSON không đúng định dạng của GUỒNG.", "error");
@@ -823,12 +1091,12 @@
     reader.readAsText(file, "utf-8");
     input.value = "";
   }
-  function resetDemo() {
+  function resetAll() {
     A.confirm({
-      title: "Dùng lại dữ liệu mẫu?",
-      message: "Toàn bộ công việc, bình luận và phiên tập trung hiện tại sẽ được thay bằng bộ dữ liệu mẫu mới.",
-      note: "Nếu muốn giữ dữ liệu thật, hãy xuất JSON trước.",
-      confirmLabel: "Dùng dữ liệu mẫu",
+      title: "Xoá toàn bộ dữ liệu?",
+      message: "Mọi thành viên, công việc, bình luận và phiên tập trung trên thiết bị này sẽ bị xoá. Bạn sẽ bắt đầu lại từ một bàn trống.",
+      note: "Không thể hoàn tác. Hãy xuất JSON trước nếu muốn giữ dữ liệu.",
+      confirmLabel: "Xoá tất cả",
       danger: true,
     }, () => {
       if (A.focus.interval) window.clearInterval(A.focus.interval);
@@ -843,7 +1111,7 @@
       A.save();
       A.updateShell();
       A.route();
-      A.toast("Đã nạp lại dữ liệu mẫu.", "success");
+      A.toast("Đã xoá toàn bộ dữ liệu. Bàn của bạn đang trống.", "success");
     });
   }
   function updateProjectName(input) {
@@ -1024,6 +1292,50 @@
       return;
     }
 
+    const addMemberBtn = event.target.closest("[data-add-member]");
+    if (addMemberBtn) {
+      openMember(null);
+      return;
+    }
+    const editMemberBtn = event.target.closest("[data-edit-member]");
+    if (editMemberBtn) {
+      openMember(editMemberBtn.dataset.editMember);
+      return;
+    }
+    const settingsBtn = event.target.closest("[data-open-settings]");
+    if (settingsBtn) {
+      openSettings();
+      return;
+    }
+    if (event.target.closest("[data-install-app]")) {
+      promptInstall();
+      return;
+    }
+
+    const colorBtn = event.target.closest("[data-member-color]");
+    if (colorBtn) {
+      const form = colorBtn.closest("#memberForm");
+      if (!form) return;
+      form.elements.color.value = colorBtn.dataset.memberColor;
+      form.querySelectorAll("[data-member-color]").forEach((btn) => {
+        const on = btn === colorBtn;
+        btn.classList.toggle("on", on);
+        btn.setAttribute("aria-pressed", String(on));
+      });
+      updateMemberPreview();
+      return;
+    }
+
+    const memberAction = event.target.closest("[data-member-action]");
+    if (memberAction) {
+      if (memberAction.dataset.memberAction === "delete-member") {
+        const form = memberAction.closest("#memberForm");
+        const id = form ? form.dataset.memberId : "";
+        if (id) requestDeleteMember(id);
+      }
+      return;
+    }
+
     const tick = event.target.closest("[data-tick-task]");
     if (tick) {
       event.preventDefault();
@@ -1143,7 +1455,7 @@
       else if (action === "import-json") {
         const input = document.getElementById("importFile");
         if (input) input.click();
-      } else if (action === "reset-demo") resetDemo();
+      } else if (action === "reset-all") resetAll();
       return;
     }
 
@@ -1159,6 +1471,10 @@
 
   document.addEventListener("input", (event) => {
     const el = event.target;
+    if (el.closest("#memberForm")) {
+      updateMemberPreview();
+      return;
+    }
     if (el.matches("[data-filter-scope][data-filter-key]") && el.tagName === "INPUT") {
       setFilter(el.dataset.filterScope, el.dataset.filterKey, el.value);
       if (filterTimer) window.clearTimeout(filterTimer);
@@ -1218,6 +1534,10 @@
       updateProjectName(el);
       return;
     }
+    if (el.id === "ownerSelect") {
+      updateOwner(el);
+      return;
+    }
     if (el.id === "importFile") {
       handleImportFile(el);
     }
@@ -1226,6 +1546,8 @@
   document.addEventListener("submit", (event) => {
     if (event.target.matches("#taskForm")) {
       saveTask(event);
+    } else if (event.target.matches("#memberForm")) {
+      saveMember(event);
     }
   });
 
@@ -1415,6 +1737,7 @@
      ============================================================ */
   function init() {
     A.applyTheme(A.DATA.settings.theme);
+    setupPWA();
     if (!A.focus.taskId) {
       const first = A.smartTasks(1)[0];
       A.focus.taskId = first ? first.id : null;

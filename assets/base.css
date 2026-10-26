@@ -199,6 +199,12 @@ a:hover { text-decoration: underline; }
 }
 .field { display: flex; flex-direction: column; gap: 0; min-width: 0; }
 .f-help { font-size: 10.5px; color: var(--muted); margin-top: 5px; line-height: 1.45; }
+.field-hint {
+  margin-top: 6px; padding: 7px 9px; border-radius: 8px;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 10px; line-height: 1.45;
+}
+.field-hint b { font-weight: 700; }
 .input, .select, .textarea {
   width: 100%; border: 1px solid var(--line); border-radius: 11px;
   background: var(--card); color: var(--ink);

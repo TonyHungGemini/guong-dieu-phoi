@@ -170,7 +170,12 @@
     </div>`;
     const summary = `<div class="list-summary"><b>${filtered.length}</b> việc <span class="dot"></span> ${filtered.filter((t) => t.status !== "done").length} đang mở <span class="dot"></span> ${filtered.filter((t) => A.isOverdue(t)).length} quá hạn <span class="dot"></span> ${filtered.filter((t) => t.status === "done").length} đã xong</div>`;
     if (!filtered.length) {
-      return `${head}${tools}${summary}<div style="margin-top:16px">${A.empty("search", "Không tìm thấy việc nào", "Thử bỏ một vài bộ lọc, hoặc tạo việc mới để bắt đầu.", `<button class="btn btn-ghost btn-sm" type="button" data-clear-filters="list">Xoá bộ lọc</button>`)}</div>`;
+      const empty = total === 0
+        ? (A.members().length
+          ? A.empty("layers", "Chưa có việc nào", "Bàn đang trống. Tạo việc đầu tiên để bắt đầu giữ nhịp.", `<button class="btn btn-accent btn-sm" type="button" data-new-task>${icon("plus")} Giao việc đầu tiên</button>`)
+          : A.empty("users", "Chưa có thành viên nào", "Thêm người vào tổ trước, rồi giao việc đầu tiên cho họ.", `<button class="btn btn-accent btn-sm" type="button" data-go="team">${icon("users")} Thêm thành viên</button>`))
+        : A.empty("search", "Không tìm thấy việc nào", "Thử bỏ một vài bộ lọc, hoặc tạo việc mới để bắt đầu.", `<button class="btn btn-ghost btn-sm" type="button" data-clear-filters="list">Xoá bộ lọc</button>`);
+      return `${head}${tools}<div style="margin-top:16px">${empty}</div>`;
     }
     const groups = A.STATUS_ORDER.map((status) => {
       let tasks = filtered.filter((t) => t.status === status);
@@ -338,13 +343,39 @@
     const avgLoad = stats.length ? Math.round(stats.reduce((sum, s) => sum + s.load, 0) / stats.length) : 0;
     const overloaded = stats.filter((s) => s.load > 100);
     const unassigned = A.openTasks().filter((t) => !t.assignee).sort((a, b) => String(a.due || "9999").localeCompare(String(b.due || "9999")));
+    const meId = A.meId();
     const head = pageHead(
       `${icon("users")} ${members.length} người · ${m.unassigned} việc chưa giao`,
       "Đội ngũ",
-      "Tải được tính bằng số việc đang mở trên năng lực tuần. Vượt 100% là tín hiệu cần san việc.",
+      "Thêm người, chỉnh vai trò và năng lực tuần. Tải vượt 100% là tín hiệu cần san việc.",
       `<button class="btn btn-ghost" type="button" data-go="reports">${icon("chart")} Báo cáo tuần</button>
-       <button class="btn btn-accent" type="button" data-new-task>${icon("plus")} Giao việc</button>`
+       <button class="btn btn-accent" type="button" data-add-member>${icon("plus")} Thêm thành viên</button>`
     );
+
+    if (!members.length) {
+      const step = (num, title, text) => `<li class="setup-step">
+        <span class="setup-dot">${num}</span>
+        <div><b>${esc(title)}</b><small>${esc(text)}</small></div>
+      </li>`;
+      return `${head}<section class="card team-empty">
+        <div class="te-main">
+          <div class="setup-eyebrow">${icon("spark")} Bắt đầu</div>
+          <h2 class="te-title">Bàn đã sẵn.<br><span>Thêm người vào tổ.</span></h2>
+          <p class="te-text">Chỉ cần tên và vai trò là có thể giao việc. Năng lực tuần giúp bạn thấy ai đang quá tải trước khi nhận thêm việc.</p>
+          <div class="setup-actions">
+            <button class="btn btn-accent" type="button" data-add-member>${icon("plus")} Thêm thành viên đầu tiên</button>
+            <button class="btn btn-ghost" type="button" data-go="dashboard">${icon("grid")} Về tổng quan</button>
+          </div>
+        </div>
+        <ol class="setup-steps te-steps">
+          ${step("1", "Thêm tên & vai trò", "Ví dụ: Lan Hương · Thiết kế")}
+          ${step("2", "Đặt năng lực tuần", "Số việc một người giữ thoải mái")}
+          ${step("3", "Giao việc đầu tiên", "Chọn người nhận, hạn và ưu tiên")}
+        </ol>
+      </section>
+      <div class="team-foot-note">${icon("alert")} Dữ liệu chỉ nằm trên thiết bị này. Thêm tên không tạo tài khoản đăng nhập cho người khác.</div>`;
+    }
+
     const summary = `<div class="team-summary">
       ${statCard("Quân số", String(members.length), "người", `${m.doing} người đang giữ việc`, "users")}
       ${statCard("Việc đang mở", String(m.open), "việc", `${m.review} việc chờ duyệt`, "layers")}
@@ -356,10 +387,13 @@
         <div class="mc-head">
           ${A.avatar(s.member, "avatar-lg")}
           <div class="mc-id">
-            <div class="mc-name">${esc(s.member.name)}${s.member.id === window.SEED.me ? `<span class="mc-you">Bạn</span>` : ""}</div>
+            <div class="mc-name">${esc(s.member.name)}${s.member.id === meId ? `<span class="mc-you">Bạn</span>` : ""}</div>
             <div class="mc-role">${esc(s.member.role)} · năng lực ${s.member.capacity} việc</div>
           </div>
-          <span class="mc-load${s.state === "ok" ? "" : " " + s.state}" title="${s.activeCount} việc mở / ${s.member.capacity} năng lực">${s.load}%</span>
+          <div class="mc-head-side">
+            <span class="mc-load${s.state === "ok" ? "" : " " + s.state}" title="${s.activeCount} việc mở / ${s.member.capacity} năng lực">${s.load}%</span>
+            <button class="icon-btn mc-edit" type="button" data-edit-member="${esc(s.member.id)}" aria-label="Sửa ${esc(s.member.name)}" title="Sửa thành viên">${icon("pencil")}</button>
+          </div>
         </div>
         <div class="mc-meter"><i class="${s.state === "ok" ? "" : s.state}" style="width:${Math.min(100, s.load)}%"></i></div>
         <div class="mc-stats">
@@ -372,6 +406,11 @@
           <button class="btn btn-ghost" type="button" data-member-filter="${esc(s.member.id)}">Xem việc ${icon("arrow-right")}</button>
         </div>
       </article>`).join("")}
+      <button class="member-add-card" type="button" data-add-member>
+        <span class="mac-ico">${icon("plus")}</span>
+        <strong>Thêm thành viên</strong>
+        <small>Người mới có thể nhận việc ngay sau khi thêm.</small>
+      </button>
     </div>`;
     const unassignedCard = unassigned.length ? `<section class="card unassigned-card">
       <div class="card-h">
@@ -436,7 +475,7 @@
       });
       lines.push("");
     }
-    lines.push(`Mốc kế tiếp: ${next ? `${next.title} · ${A.fmtLong(next.date)} (còn ${Math.max(0, next.daysLeft)} ngày)` : "Đã chạm mọi mốc"}.`);
+    lines.push(`Mốc kế tiếp: ${next ? `${next.title} · ${A.fmtLong(next.date)} (còn ${Math.max(0, next.daysLeft)} ngày)` : "Chưa đặt mốc dự án"}.`);
     lines.push("Nguồn: GUỒNG — dữ liệu lưu trên thiết bị của tổ quản trị.");
     return lines.join("\n");
   };
@@ -476,7 +515,7 @@
       ${statCard("Hoàn thành dự án", `${m.rate}%`, "", `${m.done}/${m.total} việc đã xong`, "target")}
       ${statCard("Tốc độ tuần này", String(m.doneThisWeek), "việc", compare > 0 ? `+${compare} so với tuần trước` : compare === 0 ? "Ngang tuần trước" : `${compare} so với tuần trước`, "spark")}
       ${statCard("Thời gian tập trung", String(m.focusedWeek), "phút", `Chuỗi ${A.focusStreak()} ngày liên tiếp`, "clock")}
-      ${statCard("Mốc kế tiếp", next ? String(Math.max(0, next.daysLeft)) : "—", next ? "ngày" : "", next ? next.title : "Đã chạm mọi mốc", "flag")}
+      ${statCard("Mốc kế tiếp", next ? String(Math.max(0, next.daysLeft)) : "—", next ? "ngày" : "", next ? next.title : "Chưa đặt mốc dự án", "flag")}
     </div>`;
     const velocityCard = `<section class="card rg-velocity">
       <div class="card-h">
@@ -561,7 +600,7 @@
         </div>
         <span class="due done">${icon("check")} Xong</span>
       </div>`).join("")}</div>` : `<div class="report-empty">Chưa có việc xong trong tuần. Chọn một việc nhỏ, gạch trước, rồi tính tiếp.</div>`}
-      <div class="report-foot">Mốc kế: ${next ? `${esc(next.title)} · ${A.fmtLong(next.date)}` : "Đã chạm mọi mốc"}.</div>
+      <div class="report-foot">Mốc kế: ${next ? `${esc(next.title)} · ${A.fmtLong(next.date)}` : "Chưa đặt mốc dự án"}.</div>
     </section>`;
     return `${banner}${stats}<div class="report-grid">${velocityCard}${streamsCard}${contribCard}${overdueCard}${doneCard}</div>`;
   };
