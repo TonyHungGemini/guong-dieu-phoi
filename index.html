@@ -6,7 +6,14 @@
 <title>GUỒNG · Bàn điều phối dự án App</title>
 <meta name="description" content="GUỒNG — bàn điều phối công việc của tổ quản trị dự án App. Rõ người, rõ việc, rõ nhịp.">
 <meta name="theme-color" content="#f4eee3">
+<meta name="application-name" content="GUỒNG">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="GUỒNG">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="assets/icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -15,7 +22,7 @@
 <link rel="stylesheet" href="assets/views2.css">
 <link rel="stylesheet" href="assets/views3.css">
 <script>
-try{var _d=JSON.parse(localStorage.getItem('guong.v1'));if(_d&&_d.settings&&_d.settings.theme){document.documentElement.dataset.theme=_d.settings.theme;}}catch(e){}
+try{var _d=JSON.parse(localStorage.getItem('guong.v2'));if(_d&&_d.settings&&_d.settings.theme){document.documentElement.dataset.theme=_d.settings.theme;}}catch(e){}
 </script>
 </head>
 <body>
@@ -81,7 +88,7 @@ try{var _d=JSON.parse(localStorage.getItem('guong.v1'));if(_d&&_d.settings&&_d.s
 
     <div class="side-project">
       <div class="sp-top"><span class="micro">DỰ ÁN ĐANG CHẠY</span><span class="live-dot" title="Đang hoạt động"></span></div>
-      <div class="sp-name">App Quản trị v1.0</div>
+      <div class="sp-name">Dự án App</div>
       <div class="sp-bar"><i id="sideProg" style="width:0%"></i></div>
       <div class="sp-meta"><span id="sideProgText">Đang tải…</span><span id="sideDays">—</span></div>
     </div>
@@ -155,7 +162,7 @@ try{var _d=JSON.parse(localStorage.getItem('guong.v1'));if(_d&&_d.settings&&_d.s
         <button class="icon-btn" id="themeBtn" onclick="App.toggleTheme()" aria-label="Đổi giao diện sáng/tối" title="Đổi giao diện">
           <svg class="ico" id="themeIcon"><use href="#i-moon"/></svg>
         </button>
-        <button class="avatar avatar-me" id="meAvatar" onclick="App.openSettings()" title="Tài khoản & cài đặt">MA</button>
+        <button class="avatar avatar-me" id="meAvatar" onclick="App.openSettings()" title="Chưa chọn bạn là ai — mở cài đặt">?</button>
       </div>
     </header>
 

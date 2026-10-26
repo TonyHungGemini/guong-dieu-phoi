@@ -1,0 +1,35 @@
+{
+  "name": "GUỒNG — Bàn điều phối dự án App",
+  "short_name": "GUỒNG",
+  "description": "Bàn điều phối công việc của tổ quản trị dự án App. Rõ người, rõ việc, rõ nhịp.",
+  "lang": "vi",
+  "dir": "ltr",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4eee3",
+  "theme_color": "#f4eee3",
+  "categories": ["productivity", "business"],
+  "icons": [
+    {
+      "src": "assets/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
