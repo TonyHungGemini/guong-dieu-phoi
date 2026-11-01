@@ -118,7 +118,7 @@ try{var _d=JSON.parse(localStorage.getItem('guong.v2'));if(_d&&_d.settings&&_d.s
       <button class="nav-item" data-view="reports" onclick="App.go('reports')">
         <svg class="ico"><use href="#i-chart"/></svg><span>Báo cáo</span>
       </button>
-      <button class="nav-item" onclick="window.location.href='/report/'">
+      <button class="nav-item" onclick="window.location.href = location.hostname.endsWith('github.io') ? 'https://guong-dieu-phoi.tonyhunggemini.workers.dev/report/' : '/report/'">
         <svg class="ico"><use href="#i-spark"/></svg><span>Bee Report &amp; AI</span>
       </button>
     </nav>
