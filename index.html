@@ -21,6 +21,7 @@
 <link rel="stylesheet" href="assets/views.css">
 <link rel="stylesheet" href="assets/views2.css">
 <link rel="stylesheet" href="assets/views3.css">
+<link rel="stylesheet" href="assets/reports.css">
 <script>
 try{var _d=JSON.parse(localStorage.getItem('guong.v2'));if(_d&&_d.settings&&_d.settings.theme){document.documentElement.dataset.theme=_d.settings.theme;}}catch(e){}
 </script>
@@ -118,9 +119,6 @@ try{var _d=JSON.parse(localStorage.getItem('guong.v2'));if(_d&&_d.settings&&_d.s
       <button class="nav-item" data-view="reports" onclick="App.go('reports')">
         <svg class="ico"><use href="#i-chart"/></svg><span>Báo cáo</span>
       </button>
-      <button class="nav-item" onclick="window.location.href = location.hostname.endsWith('github.io') ? 'https://guong-dieu-phoi.tonyhunggemini.workers.dev/report/' : '/report/'">
-        <svg class="ico"><use href="#i-spark"/></svg><span>Bee Report &amp; AI</span>
-      </button>
     </nav>
 
     <div class="side-spacer"></div>
@@ -181,6 +179,8 @@ try{var _d=JSON.parse(localStorage.getItem('guong.v2'));if(_d&&_d.settings&&_d.s
 <script src="assets/core.js" defer></script>
 <script src="assets/views.js" defer></script>
 <script src="assets/views2.js" defer></script>
+<script src="assets/reports.js" defer></script>
 <script src="assets/actions.js" defer></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>
 </html>

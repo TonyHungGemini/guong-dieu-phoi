@@ -15,7 +15,8 @@
     }
   ],
   "vars": {
-    "GEMINI_MODEL": "gemini-2.5-flash"
+    "GEMINI_MODEL": "gemini-2.5-flash",
+    "GOOGLE_CLIENT_ID": "80167301652-dpfgs2regia45ul3nij8klfrchbpe4gj.apps.googleusercontent.com"
   },
   "observability": {
     "enabled": true

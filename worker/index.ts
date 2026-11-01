@@ -5,6 +5,7 @@ interface Env {
   GEMINI_MODEL?: string;
   ACCESS_CODE?: string;
   SESSION_SECRET?: string;
+  GOOGLE_CLIENT_ID?: string;
 }
 
 type SyncStore = {
@@ -26,7 +27,15 @@ const EMPTY_STORE: SyncStore = {
 };
 
 const SESSION_COOKIE = "guong_sess";
+const USER_COOKIE = "guong_user";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+type SessionUser = {
+  email: string;
+  name?: string;
+  picture?: string;
+  exp: number;
+};
 
 function json(data: unknown, status = 200, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(data), {
@@ -171,6 +180,72 @@ async function sessionCookie(env: Env) {
   return `${SESSION_COOKIE}=${exp}.${sig}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}`;
 }
 
+function b64urlEncode(bytes: Uint8Array) {
+  let bin = "";
+  for (const byte of bytes) bin += String.fromCharCode(byte);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64urlDecode(value: string) {
+  const b64 = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function sessionSecret(env: Env) {
+  return env.SESSION_SECRET || env.ACCESS_CODE || "guong-local-session";
+}
+
+async function userCookie(env: Env, user: Omit<SessionUser, "exp">) {
+  const payload = b64urlEncode(encoder.encode(JSON.stringify({ ...user, exp: Date.now() + SESSION_TTL_SECONDS * 1000 })));
+  const sig = await hmacHex(sessionSecret(env), `u1:${payload}`);
+  return `${USER_COOKIE}=${payload}.${sig}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_SECONDS}`;
+}
+
+function clearUserCookie() {
+  return `${USER_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`;
+}
+
+async function readUser(request: Request, env: Env): Promise<SessionUser | null> {
+  const raw = readCookie(request, USER_COOKIE);
+  if (!raw) return null;
+  const split = raw.lastIndexOf(".");
+  if (split < 1) return null;
+  const payload = raw.slice(0, split);
+  const sig = raw.slice(split + 1);
+  const expected = await hmacHex(sessionSecret(env), `u1:${payload}`);
+  if (!constantTimeEqual(sig, expected)) return null;
+  try {
+    const user = JSON.parse(new TextDecoder().decode(b64urlDecode(payload))) as SessionUser;
+    if (!user?.email || !user.exp || user.exp < Date.now()) return null;
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchGoogleUser(accessToken: string) {
+  const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  if (!res.ok) throw new Error("Google token không hợp lệ hoặc đã hết hạn");
+  const data: any = await res.json();
+  if (!data?.email) throw new Error("Không lấy được email từ Google");
+  if (data.email_verified === false) throw new Error("Email Google chưa được xác minh");
+  return {
+    email: String(data.email).toLowerCase(),
+    name: data.name || data.email,
+    picture: data.picture || "",
+  };
+}
+
+async function resolveStoreKey(request: Request, env: Env, fallbackEmail?: string | null) {
+  const user = await readUser(request, env);
+  return storeKey(user?.email || fallbackEmail);
+}
+
 type GeminiSchema = Record<string, unknown>;
 
 async function geminiJson(env: Env, prompt: string, schema: GeminiSchema) {
@@ -300,7 +375,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   const path = url.pathname;
 
   if (path === "/api/health") {
-    return json({ status: "ok", app: "GUỒNG + Bee Report", time: new Date().toISOString(), geminiKeyConfigured: !!env.GEMINI_API_KEY });
+    return json({
+      status: "ok",
+      app: "GUỒNG + Bee Report",
+      time: new Date().toISOString(),
+      geminiKeyConfigured: !!env.GEMINI_API_KEY,
+      googleConfigured: !!env.GOOGLE_CLIENT_ID,
+    });
   }
 
   if (path === "/api/auth/status") {
@@ -320,18 +401,40 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({ ok: false, error: "Cần mã truy cập" }, 401);
   }
 
+  if (path === "/api/auth/me" && request.method === "GET") {
+    const user = await readUser(request, env);
+    return user ? json({ ok: true, email: user.email, name: user.name, picture: user.picture }) : json({ ok: false }, 401);
+  }
+
+  if (path === "/api/auth/google" && request.method === "POST") {
+    if (!env.GOOGLE_CLIENT_ID) return json({ ok: false, error: "Chưa cấu hình GOOGLE_CLIENT_ID" }, 400);
+    const body: any = await request.json().catch(() => ({}));
+    const accessToken = String(body?.access_token || "");
+    if (!accessToken) return json({ ok: false, error: "Thiếu access token" }, 400);
+    try {
+      const user = await fetchGoogleUser(accessToken);
+      return json({ ok: true, ...user }, 200, { "set-cookie": await userCookie(env, user) });
+    } catch (err: any) {
+      return json({ ok: false, error: err?.message || "Đăng nhập Google thất bại" }, 401);
+    }
+  }
+
+  if (path === "/api/auth/logout" && request.method === "POST") {
+    return json({ ok: true }, 200, { "set-cookie": clearUserCookie() });
+  }
+
   if (path === "/api/sync/stream" && request.method === "GET") {
-    return sseStream(env, storeKey(url.searchParams.get("userEmail")));
+    return sseStream(env, await resolveStoreKey(request, env, url.searchParams.get("userEmail")));
   }
 
   if (path === "/api/sync/data" && request.method === "GET") {
-    const store = await readStore(env, storeKey(url.searchParams.get("userEmail")));
+    const store = await readStore(env, await resolveStoreKey(request, env, url.searchParams.get("userEmail")));
     return json({ success: true, ...store });
   }
 
   if (path === "/api/sync/data" && request.method === "POST") {
     const body: any = await request.json().catch(() => ({}));
-    const key = storeKey(body?.userEmail);
+    const key = await resolveStoreKey(request, env, body?.userEmail);
     const store = await readStore(env, key);
     const merged = mergeStore(store, body);
     await writeStore(env, key, merged);

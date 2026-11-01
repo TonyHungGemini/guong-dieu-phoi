@@ -1,4 +1,4 @@
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const CACHE = `guong-${VERSION}`;
 const SHELL = [
   "./",
@@ -8,10 +8,12 @@ const SHELL = [
   "./assets/views.css",
   "./assets/views2.css",
   "./assets/views3.css",
+  "./assets/reports.css",
   "./assets/data.js",
   "./assets/core.js",
   "./assets/views.js",
   "./assets/views2.js",
+  "./assets/reports.js",
   "./assets/actions.js",
   "./assets/favicon.svg",
   "./assets/icon-192.png",
@@ -55,7 +57,7 @@ self.addEventListener("fetch", (event) => {
   const sameOrigin = url.origin === self.location.origin;
   const fonts = url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com";
 
-  // Bee Report module owns its own worker and data endpoints
+  // API và route tĩnh của kho báo cáo luôn đi thẳng ra mạng
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/report")) return;
 
   if (sameOrigin && request.mode === "navigate") {

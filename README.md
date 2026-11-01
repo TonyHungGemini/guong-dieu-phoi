@@ -134,8 +134,9 @@ Không có thư viện ngoài, không có API, không cần cài đặt phụ th
 Từ 01/11/2026 repo này chứa cả hai phần trên **cùng một server Express**:
 
 - `/` — bàn điều phối GUỒNG (tĩnh, dữ liệu `localStorage` khóa `guong.v2`)
-- `/report/` — mô-đun Bee Report (React + Vite, dữ liệu IndexedDB `DocuReportAI_DB`)
-- `/api/*` — API đồng bộ SSE (`/api/sync/*`) và AI Gemini (`/api/ai/*`), key nằm server-side
+- `/` → mục **Báo cáo** — kho báo cáo native (`assets/reports.js`), dữ liệu đồng bộ theo email Google
+- `/report/` — mô-đun Bee Report gốc (React + Vite, IndexedDB `DocuReportAI_DB`) vẫn giữ để tra cứu
+- `/api/*` — API đồng bộ SSE (`/api/sync/*`), Google login (`/api/auth/*`) và AI Gemini (`/api/ai/*`), key nằm server-side
 
 Chạy trên máy:
 
@@ -156,7 +157,23 @@ Lưu ý: GitHub Pages chỉ chạy được phần tĩnh của GUỒNG; các API
 Bản đầy đủ chạy trên Cloudflare Worker: tĩnh tại Workers Assets, đồng bộ trong KV, AI gọi thẳng Gemini REST.
 
 - Địa chỉ: https://guong-dieu-phoi.tonyhunggemini.workers.dev
-- GUỒNG: `/` · Bee Report: `/report/` · API: `/api/*` (cần mã truy cập do chủ dự án giữ)
+- GUỒNG + kho báo cáo: `/` · Bee Report gốc: `/report/` · API: `/api/*` (cần mã truy cập do chủ dự án giữ)
+- Đăng nhập Google trong mục **Báo cáo** để mở kho theo email; dữ liệu lưu ở KV với khóa `sync:<email>`, đồng bộ SSE giữa máy tính và điện thoại.
+
+### Bắt buộc một lần: OAuth origin
+
+Google Identity Services chỉ cấp token khi origin nằm trong OAuth client `80167301652-...apps.googleusercontent.com`:
+
+1. Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web).
+2. **Authorized JavaScript origins** thêm:
+   - `https://guong-dieu-phoi.tonyhunggemini.workers.dev`
+   - `http://localhost:3100` (khi chạy `wrangler dev --port 3100`)
+3. Lưu, đợi ~5 phút rồi đăng nhập lại. Nếu thiếu, Google báo `origin_mismatch`.
+
+### Nhập báo cáo thật từ Bee
+
+- **Nhập từ Bee Drive** (trong kho Báo cáo): đọc `bee_report_data.json` từ Google Drive appDataFolder của chính tài khoản đang đăng nhập. Cần đã bật đồng bộ Drive trong Bee ít nhất một lần.
+- **Nhập JSON**: chọn tệp `DocuReport_Backup_YYYY-MM-DD.json` xuất từ Bee (mảng báo cáo hoặc `{ reports, refDocs }`).
 
 ```bash
 npx wrangler login
@@ -168,13 +185,14 @@ npm run deploy                             # build:site + wrangler deploy
 ```
 
 - `npm run build:site` tạo `dist-site/`: bộ khung GUỒNG + `dist-report/` lồng tại `/report/`.
-- `npm run preview:cf` chạy thử Worker ở máy (`wrangler dev`).
+- `npm run preview:cf` chạy thử Worker ở máy (`wrangler dev`). Chạy đúng cổng mà OAuth origin đã đăng ký: `npx wrangler dev --port 3100 --var ACCESS_CODE:<mã>`.
+- `GOOGLE_CLIENT_ID` nằm trong `wrangler.jsonc` (`vars`), không phải secret.
 - Không có `ACCESS_CODE` thì API mở công khai; đặt mã để chặn truy cập dữ liệu báo cáo.
-- `ACCESS_CODE` chỉ có hiệu lực phía server; trang `/` và `/report/` vẫn tải được nhưng API trả 401 cho tới khi nhập mã.
-- Seed dữ liệu cũ vào KV (một lần):
+- `ACCESS_CODE` chỉ có hiệu lực phía server; trang `/` vẫn tải được nhưng API trả 401 cho tới khi nhập mã.
+- Seed dữ liệu cũ vào KV (một lần), theo đúng email Google sau khi đăng nhập:
 
 ```bash
-npx wrangler kv key put --binding SYNC_KV "sync:default_user" --path ../backup/kv-seed-default_user.json --remote
+npx wrangler kv key put --binding SYNC_KV "sync:studio_geminix2_gmail_com" --path ../backup/kv-seed-default_user.json --remote
 ```
 
 Push lên `main` sẽ tự deploy nếu repo có secrets `CLOUDFLARE_API_TOKEN` và `CLOUDFLARE_ACCOUNT_ID` (workflow `.github/workflows/deploy.yml`).
