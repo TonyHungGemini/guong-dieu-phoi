@@ -889,7 +889,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     if (!license || !license.expired) {
       return json({ ok: false, error: "Quyền xem của bạn đang không bị giới hạn." }, 400);
     }
-    const request: RequestRecord = {
+    const renewal: RequestRecord = {
       email: user.email,
       name: user.name || user.email,
       owner,
@@ -898,8 +898,8 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       note,
       createdAt: new Date().toISOString(),
     };
-    await env.SYNC_KV.put(requestKey(owner, user.email), JSON.stringify(request));
-    return json({ ok: true, request });
+    await env.SYNC_KV.put(requestKey(owner, user.email), JSON.stringify(renewal));
+    return json({ ok: true, request: renewal });
   }
 
   if (path === "/api/projects/requests" && request.method === "GET") {
