@@ -888,9 +888,30 @@
     if ("serviceWorker" in navigator) {
       const secure = location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1";
       if (secure) {
-        const register = () => navigator.serviceWorker.register("./sw.js").catch(() => {
-          /* PWA không khả dụng — ứng dụng vẫn chạy bình thường */
-        });
+        const register = async () => {
+          try {
+            const reg = await navigator.serviceWorker.register("./sw.js");
+            const hadController = Boolean(navigator.serviceWorker.controller);
+            let reloading = false;
+            navigator.serviceWorker.addEventListener("controllerchange", () => {
+              if (!hadController || reloading) return;
+              if (document.querySelector(".overlay")) {
+                A.toast("Đã có bản GUỒNG mới. Tải lại trang khi đóng cửa sổ để dùng bản mới.", "info");
+                return;
+              }
+              reloading = true;
+              location.reload();
+            });
+            const check = () => reg.update().catch(() => {});
+            setInterval(check, 30 * 60 * 1000);
+            window.addEventListener("online", check);
+            document.addEventListener("visibilitychange", () => {
+              if (document.visibilityState === "visible") check();
+            });
+          } catch (err) {
+            /* PWA không khả dụng — ứng dụng vẫn chạy bình thường */
+          }
+        };
         if (document.readyState === "complete") register();
         else window.addEventListener("load", register, { once: true });
       }
@@ -1305,6 +1326,10 @@
     const settingsBtn = event.target.closest("[data-open-settings]");
     if (settingsBtn) {
       openSettings();
+      return;
+    }
+    if (event.target.closest("[data-account-login]")) {
+      A.openAccount();
       return;
     }
     if (event.target.closest("[data-install-app]")) {

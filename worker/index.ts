@@ -31,6 +31,9 @@ const EMPTY_STORE: SyncStore = {
 const SESSION_COOKIE = "guong_sess";
 const USER_COOKIE = "guong_user";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
+const FILE_MAX_BYTES = 8 * 1024 * 1024;
+const FILE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const INLINE_FILE_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif", "text/plain"];
 
 type SessionUser = {
   email: string;
@@ -158,6 +161,8 @@ function readCookie(request: Request, name: string) {
 }
 
 async function isAuthorized(request: Request, env: Env) {
+  // Người dùng đã đăng nhập Google có kho riêng, không cần mã dùng chung.
+  if (await readUser(request, env)) return true;
   if (!env.ACCESS_CODE) return true;
   const secret = env.SESSION_SECRET || env.ACCESS_CODE;
   const raw = readCookie(request, SESSION_COOKIE);
@@ -250,6 +255,15 @@ async function fetchGoogleUser(accessToken: string, env: Env) {
 async function resolveStoreKey(request: Request, env: Env) {
   const user = await readUser(request, env);
   return user?.email ? storeKey(user.email) : null;
+}
+
+function blobKey(storeKeyValue: string, fileId: string) {
+  return `blob:${storeKeyValue}:${fileId}`;
+}
+
+function fileDisposition(name: string, inline: boolean) {
+  const ascii = name.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_") || "tep-dinh-kem";
+  return `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
 type GeminiSchema = Record<string, unknown>;
@@ -454,10 +468,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({ ok: true }, 200, { "set-cookie": await sessionCookie(env) });
   }
 
-  if (!(await isAuthorized(request, env))) {
-    return json({ ok: false, error: "Cần mã truy cập" }, 401);
-  }
-
+  // Các route xác thực Google phải mở trước cổng mã để bạn bè nhận link có thể tự đăng nhập.
   if (path === "/api/auth/me" && request.method === "GET") {
     const user = await readUser(request, env);
     return user ? json({ ok: true, email: user.email, name: user.name, picture: user.picture }) : json({ ok: false }, 401);
@@ -478,6 +489,84 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
 
   if (path === "/api/auth/logout" && request.method === "POST") {
     return json({ ok: true }, 200, { "set-cookie": clearUserCookie() });
+  }
+
+  if (!(await isAuthorized(request, env))) {
+    return json({ ok: false, error: "Cần mã truy cập" }, 401);
+  }
+
+  if (path === "/api/files" && request.method === "POST") {
+    const key = await resolveStoreKey(request, env);
+    if (!key) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const declared = Number(request.headers.get("content-length") || "0");
+    if (declared > FILE_MAX_BYTES) {
+      return json({ ok: false, error: "Tệp vượt quá 8MB. Nén lại hoặc dùng link Drive." }, 413);
+    }
+    const bytes = await request.arrayBuffer();
+    if (!bytes.byteLength) return json({ ok: false, error: "Tệp rỗng" }, 400);
+    if (bytes.byteLength > FILE_MAX_BYTES) {
+      return json({ ok: false, error: "Tệp vượt quá 8MB. Nén lại hoặc dùng link Drive." }, 413);
+    }
+    let rawName = "tep-dinh-kem";
+    try {
+      rawName = decodeURIComponent(request.headers.get("x-file-name") || "");
+    } catch {
+      rawName = request.headers.get("x-file-name") || "tep-dinh-kem";
+    }
+    const name = String(rawName || "tep-dinh-kem").replace(/[\u0000-\u001f\\/]/g, "_").slice(0, 180) || "tep-dinh-kem";
+    const type = String(request.headers.get("x-file-type") || request.headers.get("content-type") || "application/octet-stream")
+      .split(";")[0]
+      .slice(0, 120) || "application/octet-stream";
+    const reportId = String(request.headers.get("x-report-id") || "").slice(0, 64);
+    const wanted = String(request.headers.get("x-file-id") || "");
+    const id = FILE_ID_RE.test(wanted) ? wanted : `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+
+    const store = await readStore(env, key);
+    const version = store.fileBlobs.filter((b: any) => b?.reportId === reportId).length + 1;
+    const meta = { id, reportId, name, size: bytes.byteLength, type, version, uploadedAt: new Date().toISOString() };
+    await env.SYNC_KV.put(blobKey(key, id), bytes, {
+      metadata: { reportId, name, type, size: bytes.byteLength },
+    });
+    store.fileBlobs = store.fileBlobs.filter((b: any) => b?.id !== id).concat(meta);
+    store.lastUpdated = meta.uploadedAt;
+    await writeStore(env, key, store);
+    return json({ ok: true, file: meta });
+  }
+
+  const fileMatch = path.match(/^\/api\/files\/([A-Za-z0-9_-]{1,64})$/);
+  if (fileMatch && (request.method === "GET" || request.method === "HEAD")) {
+    const key = await resolveStoreKey(request, env);
+    if (!key) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const store = await readStore(env, key);
+    const meta: any = store.fileBlobs.find((b: any) => b?.id === fileMatch[1]);
+    if (!meta) return json({ ok: false, error: "Không tìm thấy tệp trong kho" }, 404);
+    const bytes = await env.SYNC_KV.get(blobKey(key, meta.id), "arrayBuffer");
+    if (!bytes) return json({ ok: false, error: "Tệp không còn trên máy chủ" }, 404);
+    const type = String(meta.type || "application/octet-stream");
+    const wantDownload = url.searchParams.get("download") === "1";
+    const inline = !wantDownload && INLINE_FILE_TYPES.includes(type);
+    const headers: Record<string, string> = {
+      "content-type": type,
+      "content-length": String(bytes.byteLength),
+      "content-disposition": fileDisposition(String(meta.name || "tep-dinh-kem"), inline),
+      "cache-control": "private, max-age=600",
+      "x-content-type-options": "nosniff",
+    };
+    if (!inline) headers["content-security-policy"] = "sandbox";
+    return new Response(request.method === "HEAD" ? null : bytes, { headers });
+  }
+
+  if (fileMatch && request.method === "DELETE") {
+    const key = await resolveStoreKey(request, env);
+    if (!key) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const store = await readStore(env, key);
+    const exists = store.fileBlobs.some((b: any) => b?.id === fileMatch[1]);
+    if (!exists) return json({ ok: false, error: "Không tìm thấy tệp trong kho" }, 404);
+    await env.SYNC_KV.delete(blobKey(key, fileMatch[1]));
+    store.fileBlobs = store.fileBlobs.filter((b: any) => b?.id !== fileMatch[1]);
+    store.lastUpdated = new Date().toISOString();
+    await writeStore(env, key, store);
+    return json({ ok: true, deleted: fileMatch[1] });
   }
 
   if (path === "/api/sync/stream" && request.method === "GET") {

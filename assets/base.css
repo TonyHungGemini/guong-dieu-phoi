@@ -473,8 +473,53 @@ kbd {
 .st-label { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .st-kbd { font-family: var(--mono); font-size: 9px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 2px 4px; line-height: 1; }
 .btn-new { height: 38px; padding: 0 14px; }
-.avatar-me { width: 36px; height: 36px; font-size: 10.5px; cursor: pointer; transition: transform 0.16s; }
+.avatar-me { width: 36px; height: 36px; font-size: 10.5px; cursor: pointer; transition: transform 0.16s; overflow: hidden; }
 .avatar-me:hover { transform: translateY(-1px); }
+.avatar-me img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.avatar-me.has-photo { padding: 0; background: var(--card-2); }
+.account-cta[hidden] { display: none !important; }
+.account-cta { height: 34px; padding: 0 11px; }
+.account-cta .ico { width: 15px; height: 15px; }
+
+/* ---------- tài khoản ---------- */
+.account-overlay { align-items: flex-start; padding-top: 8vh; }
+.account-modal { max-width: 520px; }
+.account-profile {
+  display: flex; align-items: center; gap: 12px;
+  padding: 13px 14px; border: 1px solid var(--line); border-radius: 14px;
+  background: var(--card-2);
+}
+.account-avatar {
+  width: 46px; height: 46px; flex: none; border-radius: 50%;
+  object-fit: cover; border: 1px solid var(--line);
+}
+.account-avatar.fallback {
+  display: grid; place-items: center;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 17px; font-weight: 800;
+}
+.account-profile-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.account-profile-main strong { font-size: 13.5px; font-weight: 750; }
+.account-profile-main span { font-size: 10.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.account-status {
+  flex: none; padding: 4px 9px; border-radius: 99px;
+  background: var(--ok-soft); color: var(--ok);
+  font-size: 9px; font-weight: 750; letter-spacing: 0.05em; text-transform: uppercase;
+}
+.account-note { margin-top: 12px; font-size: 11.5px; line-height: 1.65; color: var(--muted); }
+.account-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.account-hero { padding: 18px; border-radius: 15px; background: var(--ink); color: var(--paper); }
+.account-hero strong { display: block; font-size: 17px; font-weight: 750; letter-spacing: -0.02em; line-height: 1.35; }
+.account-hero p { margin: 7px 0 14px; font-size: 11.5px; line-height: 1.65; opacity: 0.72; }
+.account-points { list-style: none; display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.account-points li { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--ink-2); }
+.account-points .ico { width: 14px; height: 14px; flex: none; color: var(--ok); }
+.account-privacy {
+  margin-top: 14px; padding: 10px 12px; border-radius: 10px;
+  background: var(--card-2); color: var(--muted);
+  font-size: 10.5px; line-height: 1.6;
+}
+.account-skip { margin-top: 12px; }
 
 /* ---------- view / page heads ---------- */
 .view {

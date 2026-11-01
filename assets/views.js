@@ -145,7 +145,11 @@
     const m = A.metrics();
     const me = A.me();
     const now = A.todayISO();
-    const firstName = me ? me.name.split(" ")[0] : "bạn";
+    const accountName = App.account && App.account.name ? String(App.account.name).trim() : "";
+    const friendlyName = accountName && !accountName.includes("@") ? accountName : "";
+    const firstName = friendlyName
+      ? friendlyName.split(/\s+/).filter(Boolean).pop()
+      : me ? me.name.split(" ")[0] : "bạn";
     const urgent = uniQ(m.overdueTasks.map((t) => t.id).concat(m.dueTodayTasks.map((t) => t.id)));
     const smart = A.smartTasks(5);
     const msList = A.milestones();
@@ -330,7 +334,17 @@
     </section>`;
 
     const setup = !members.length || m.total === 0 ? setupCard(members, m) : "";
-    return `${hero}${kpis}${setup}<div class="dash-grid${msList.length ? "" : " no-ms"}">${priorityCard}${msCard}${streamsCard}${pulseCard}${actCard}</div>`;
+    const accountBanner = !App.account
+      ? `<section class="account-banner" aria-label="Đăng nhập Google">
+          <span class="ab-ico">${icon("users")}</span>
+          <div class="ab-main">
+            <strong>Mang GUỒNG theo tài khoản của bạn</strong>
+            <span>Đăng nhập Google để tách bàn việc và kho báo cáo theo email. Bạn bè nhận link cũng tự mở không gian riêng.</span>
+          </div>
+          <button class="btn btn-accent btn-sm" type="button" data-account-login>${icon("users")} Đăng nhập</button>
+        </section>`
+      : "";
+    return `${accountBanner}${hero}${kpis}${setup}<div class="dash-grid${msList.length ? "" : " no-ms"}">${priorityCard}${msCard}${streamsCard}${pulseCard}${actCard}</div>`;
   };
 
   /* ============================================================

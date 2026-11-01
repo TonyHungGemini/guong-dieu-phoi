@@ -8,6 +8,9 @@
   const App = (window.App = {});
   const KEY = "guong.v2";
   const LEGACY_KEY = "guong.v1";
+  const ACCOUNT_KEY = "guong.account";
+  const GOOGLE_CLIENT_ID = "777663854457-0ghqdqjn3hoahavpthcafafn741etg8v.apps.googleusercontent.com";
+  const ACCOUNT_EVENT = "guong:account";
   const $ = (sel, root = document) => (root || document).querySelector(sel);
 
   const STATUS = {
@@ -334,20 +337,49 @@
     };
   }
 
+  function scopedKey(email) {
+    return email ? `${KEY}::${String(email).toLowerCase()}` : KEY;
+  }
+  function readAccountProfile() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(ACCOUNT_KEY));
+      if (raw && raw.email) {
+        return {
+          email: String(raw.email).toLowerCase(),
+          name: raw.name || raw.email,
+          picture: raw.picture || "",
+        };
+      }
+    } catch (err) {
+      /* hồ sơ hỏng — coi như chưa đăng nhập */
+    }
+    return null;
+  }
+  function writeAccountProfile(user) {
+    try {
+      if (user) localStorage.setItem(ACCOUNT_KEY, JSON.stringify(user));
+      else localStorage.removeItem(ACCOUNT_KEY);
+    } catch (err) {
+      /* trình duyệt chặn bộ nhớ */
+    }
+  }
   function persist(state) {
     try {
-      localStorage.setItem(KEY, JSON.stringify(state || App.DATA));
+      localStorage.setItem(App.KEY || KEY, JSON.stringify(state || App.DATA));
     } catch (err) {
       /* bộ nhớ bị chặn hoặc đầy — ứng dụng vẫn chạy trong phiên này */
     }
   }
-  function loadState() {
-    let state = null;
+  function readStoredState(storageKey) {
     try {
-      state = normalizeState(JSON.parse(localStorage.getItem(KEY)));
+      return normalizeState(JSON.parse(localStorage.getItem(storageKey)));
     } catch (err) {
-      state = null;
+      return null;
     }
+  }
+  function loadState(storageKey) {
+    const key = storageKey || App.KEY || KEY;
+    let state = readStoredState(key);
     if (!state) {
       try {
         localStorage.removeItem(LEGACY_KEY);
@@ -355,12 +387,18 @@
         /* trình duyệt chặn bộ nhớ — bản sạch vẫn chạy trong phiên này */
       }
       state = normalizeState(S.create());
-      persist(state);
+      try {
+        localStorage.setItem(key, JSON.stringify(state));
+      } catch (err) {
+        /* bỏ qua */
+      }
     }
     return state;
   }
 
-  App.DATA = loadState();
+  App.account = readAccountProfile();
+  App.KEY = scopedKey(App.account && App.account.email);
+  App.DATA = loadState(App.KEY);
 
   /* ---------- public: tiện ích ---------- */
   App.STATUS = STATUS;
@@ -726,6 +764,213 @@
     App.toast(next === "dark" ? "Đã bật giao diện tối." : "Đã trở lại giao diện sáng.", "info");
   };
 
+  /* ---------- tài khoản Google ---------- */
+  function emitAccount() {
+    try {
+      window.dispatchEvent(new CustomEvent(ACCOUNT_EVENT, { detail: App.account }));
+    } catch (err) {
+      /* trình duyệt cũ — bỏ qua */
+    }
+  }
+  function apiFetch(url, options) {
+    const opts = Object.assign({ credentials: "same-origin" }, options || {});
+    return fetch(url, opts).then(async (res) => {
+      const type = res.headers.get("content-type") || "";
+      if (!type.includes("application/json")) {
+        const err = new Error("API chưa sẵn sàng trên địa chỉ này.");
+        err.offline = true;
+        throw err;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err = new Error(data.error || `Máy chủ trả về ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return data;
+    });
+  }
+
+  App.setAccount = function (user) {
+    if (!user || !user.email) return;
+    const next = {
+      email: String(user.email).toLowerCase(),
+      name: user.name || user.email,
+      picture: user.picture || "",
+    };
+    if (App.account && App.account.email === next.email) {
+      App.account = next;
+      writeAccountProfile(next);
+      App.updateShell();
+      emitAccount();
+      return;
+    }
+    const previousEmail = App.account ? App.account.email : null;
+    persist(App.DATA);
+    App.account = next;
+    writeAccountProfile(next);
+    const key = scopedKey(next.email);
+    let state = readStoredState(key);
+    if (!state) {
+      // Lần đầu đăng nhập: chuyển bàn đang dùng trên máy sang kho riêng.
+      // Đổi giữa hai tài khoản thì tài khoản mới bắt đầu từ bản sạch.
+      state = previousEmail ? normalizeState(S.create()) : readStoredState(KEY) || normalizeState(S.create());
+    }
+    App.DATA = state || normalizeState(S.create());
+    App.KEY = key;
+    persist(App.DATA);
+    App.applyTheme(App.DATA.settings.theme, false);
+    App.updateShell();
+    App.render({ animate: false });
+    emitAccount();
+  };
+
+  App.clearAccount = function () {
+    if (!App.account) return;
+    persist(App.DATA);
+    App.account = null;
+    writeAccountProfile(null);
+    App.KEY = KEY;
+    App.DATA = loadState(KEY);
+    App.applyTheme(App.DATA.settings.theme, false);
+    App.updateShell();
+    App.render({ animate: false });
+    emitAccount();
+  };
+
+  App.checkAccount = async function () {
+    try {
+      const me = await apiFetch("/api/auth/me");
+      App.setAccount({ email: me.email, name: me.name, picture: me.picture });
+    } catch (err) {
+      if (err.status === 401 && App.account) {
+        App.clearAccount();
+        App.toast("Phiên Google đã hết hạn — đang dùng dữ liệu trên máy này.", "info");
+      }
+    }
+  };
+
+  App.signInGoogle = function () {
+    if (App.accountBusy) return;
+    if (!(window.google && window.google.accounts && window.google.accounts.oauth2)) {
+      App.toast("Google chưa tải xong. Thử lại sau 1–2 giây.", "error");
+      return;
+    }
+    App.accountBusy = true;
+    if (!App._tokenClient) {
+      App._tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: "openid email profile",
+        callback: async (response) => {
+          App.accountBusy = false;
+          if (!response || !response.access_token) {
+            App.toast("Google không trả về quyền truy cập.", "error");
+            return;
+          }
+          try {
+            const user = await apiFetch("/api/auth/google", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ access_token: response.access_token }),
+            });
+            App.setAccount(user);
+            App.closeAllOverlays();
+            App.toast(`Đã đăng nhập ${user.email}`, "success");
+          } catch (err) {
+            App.toast(err.message || "Đăng nhập Google thất bại.", "error");
+          }
+        },
+      });
+    }
+    try {
+      App._tokenClient.requestAccessToken({ prompt: "select_account" });
+    } catch (err) {
+      App.accountBusy = false;
+      App.toast("Không mở được hộp thoại Google.", "error");
+    }
+  };
+
+  App.signOutGoogle = async function () {
+    try {
+      await apiFetch("/api/auth/logout", { method: "POST" });
+    } catch (err) {
+      /* vẫn đăng xuất cục bộ */
+    }
+    App.clearAccount();
+    App.closeAllOverlays();
+    App.toast("Đã đăng xuất. Bàn việc trên máy này vẫn được giữ.", "info");
+  };
+
+  function accountOverlayHtml() {
+    const user = App.account;
+    if (user) {
+      const initial = (user.name || user.email || "?").trim().charAt(0).toUpperCase();
+      return `<div class="modal account-modal" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <div>
+            <div class="modal-eyebrow">${icon("users")} TÀI KHOẢN GUỒNG</div>
+            <div class="modal-title">${esc(user.name || "Tài khoản Google")}</div>
+            <div class="modal-sub">${esc(user.email)}</div>
+          </div>
+          <button class="icon-btn modal-close" type="button" data-acc-close aria-label="Đóng">${icon("x")}</button>
+        </div>
+        <div class="modal-body">
+          <div class="account-profile">
+            ${user.picture ? `<img class="account-avatar" src="${esc(user.picture)}" alt="" referrerpolicy="no-referrer">` : `<span class="account-avatar fallback">${esc(initial)}</span>`}
+            <div class="account-profile-main"><strong>${esc(user.name || "Tài khoản Google")}</strong><span>${esc(user.email)}</span></div>
+            <span class="account-status">Đã kết nối</span>
+          </div>
+          <p class="account-note">Bàn việc trên trình duyệt này và kho báo cáo được tách theo email <b>${esc(user.email)}</b>. Người dùng tài khoản khác không thấy dữ liệu của bạn.</p>
+          <div class="account-actions">
+            <button class="btn btn-ghost" type="button" data-acc-settings>${icon("settings")} Cài đặt &amp; dữ liệu</button>
+            <button class="btn btn-ghost" type="button" data-acc-signout>${icon("external")} Đăng xuất</button>
+          </div>
+        </div>
+      </div>`;
+    }
+    return `<div class="modal account-modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div>
+          <div class="modal-eyebrow">${icon("users")} CÁ NHÂN HOÁ</div>
+          <div class="modal-title">Đăng nhập GUỒNG của bạn</div>
+          <div class="modal-sub">Mỗi tài khoản Google là một không gian riêng.</div>
+        </div>
+        <button class="icon-btn modal-close" type="button" data-acc-close aria-label="Đóng">${icon("x")}</button>
+      </div>
+      <div class="modal-body">
+        <div class="account-hero">
+          <strong>Gửi link, bạn bè tự mở bàn của họ.</strong>
+          <p>Đăng nhập bằng Google để nhận kho báo cáo, tệp đính kèm và Chú Ong nhắc việc riêng. Dữ liệu tách theo email, không trộn giữa các tài khoản.</p>
+          <button class="btn btn-accent" type="button" data-acc-signin>${icon("users")} Đăng nhập bằng Google</button>
+        </div>
+        <ul class="account-points">
+          <li>${icon("check-circle")} Kho báo cáo riêng, đồng bộ giữa các thiết bị</li>
+          <li>${icon("check-circle")} Bàn việc được lưu theo từng tài khoản trên trình duyệt</li>
+          <li>${icon("check-circle")} Đăng xuất là ẩn toàn bộ dữ liệu của tài khoản đó</li>
+        </ul>
+        <p class="account-privacy">Dữ liệu nghiệp vụ nằm trong kho của GUỒNG và được khoá theo email. Chủ vận hành hệ thống vẫn có quyền kỹ thuật với hạ tầng lưu trữ.</p>
+        <button class="btn btn-ghost account-skip" type="button" data-acc-close>Dùng tiếp dữ liệu trên máy này</button>
+      </div>
+    </div>`;
+  }
+
+  App.openAccount = function () {
+    const overlay = App.openOverlay(accountOverlayHtml(), { className: "account-overlay" });
+    if (!overlay) return;
+    overlay.querySelectorAll("[data-acc-close]").forEach((btn) => btn.addEventListener("click", () => App.closeOverlay(overlay)));
+    const signin = overlay.querySelector("[data-acc-signin]");
+    if (signin) signin.addEventListener("click", () => App.signInGoogle());
+    const signout = overlay.querySelector("[data-acc-signout]");
+    if (signout) signout.addEventListener("click", () => App.signOutGoogle());
+    const settings = overlay.querySelector("[data-acc-settings]");
+    if (settings) {
+      settings.addEventListener("click", () => {
+        App.closeOverlay(overlay);
+        App.openSettings();
+      });
+    }
+  };
+
   /* ---------- sidebar ---------- */
   App.toggleSidebar = function (force) {
     const open = typeof force === "boolean" ? force : !document.body.classList.contains("sidebar-open");
@@ -994,18 +1239,36 @@
     const crumb = document.getElementById("crumbNow");
     if (crumb) crumb.textContent = VIEW_LABEL[App.view] || "Tổng quan";
     const avatar = document.getElementById("meAvatar");
+    const account = App.account;
     const me = App.me();
     if (avatar) {
-      if (me) {
-        avatar.textContent = me.short;
-        avatar.style.setProperty("--who", me.color);
-        avatar.title = `${me.name} · ${me.role}`;
+      if (account) {
+        const initial = (account.name || account.email || "?").trim().charAt(0).toUpperCase();
+        if (account.picture) {
+          avatar.innerHTML = `<img src="${esc(account.picture)}" alt="" referrerpolicy="no-referrer">`;
+        } else {
+          avatar.textContent = initial;
+          avatar.style.setProperty("--who", "var(--accent)");
+        }
+        avatar.classList.add("has-photo");
+        avatar.title = `${account.name} · ${account.email}`;
+        avatar.setAttribute("aria-label", `Tài khoản ${account.email}`);
       } else {
-        avatar.textContent = "?";
-        avatar.style.setProperty("--who", "var(--line-strong)");
-        avatar.title = "Chưa chọn bạn là ai · mở cài đặt";
+        avatar.classList.remove("has-photo");
+        if (me) {
+          avatar.textContent = me.short;
+          avatar.style.setProperty("--who", me.color);
+          avatar.title = `${me.name} · ${me.role} · bấm để đăng nhập Google`;
+        } else {
+          avatar.textContent = "?";
+          avatar.style.setProperty("--who", "var(--line-strong)");
+          avatar.title = "Đăng nhập Google để cá nhân hoá";
+        }
+        avatar.setAttribute("aria-label", "Đăng nhập Google");
       }
     }
+    const accountCta = document.getElementById("accountCta");
+    if (accountCta) accountCta.hidden = Boolean(account);
     syncThemeIcon();
     document.title = `${VIEW_LABEL[App.view] || "Tổng quan"} · GUỒNG — ${projectName}`;
   };
@@ -1077,7 +1340,11 @@
     App.route();
   });
   window.addEventListener("storage", (event) => {
-    if (event.key !== KEY || !event.newValue) return;
+    if (event.key === ACCOUNT_KEY) {
+      window.location.reload();
+      return;
+    }
+    if (event.key !== App.KEY || !event.newValue) return;
     try {
       const incoming = normalizeState(JSON.parse(event.newValue));
       if (!incoming) return;
@@ -1094,5 +1361,5 @@
 
   App.loadState = loadState;
   App.normalizeState = normalizeState;
-  App.KEY = KEY;
+  App.checkAccount();
 })();

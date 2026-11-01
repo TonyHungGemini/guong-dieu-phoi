@@ -77,6 +77,23 @@
 /* ============================================================
    DASHBOARD · hero
    ============================================================ */
+.account-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 12px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+}
+.account-banner .ab-ico {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 34px; height: 34px; border-radius: 10px;
+  background: var(--accent-soft); color: var(--accent);
+}
+.account-banner .ab-ico .ico { width: 16px; height: 16px; }
+.account-banner .ab-main { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.account-banner strong { font-size: 12px; font-weight: 750; }
+.account-banner span { font-size: 10.5px; line-height: 1.5; color: var(--muted); }
+
 .hero {
   position: relative; overflow: hidden;
   display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
