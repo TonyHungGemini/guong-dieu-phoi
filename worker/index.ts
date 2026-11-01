@@ -303,6 +303,16 @@ type MemberRecord = {
   lastSeen: string;
 };
 
+type RequestRecord = {
+  email: string;
+  name: string;
+  owner: string;
+  projectId: string;
+  projectName: string;
+  note: string;
+  createdAt: string;
+};
+
 const clip = (value: unknown, max = 120) => String(value ?? "").slice(0, max);
 const asArray = (value: unknown): any[] => (Array.isArray(value) ? value : []);
 const cleanEmail = (value: unknown) => clip(value, 160).trim().toLowerCase();
@@ -315,6 +325,8 @@ const memberPrefix = (owner: string) => `member:${owner}:`;
 const joinKey = (email: string, owner: string, projectId: string) => `join:${email}:${owner}:${projectId}`;
 const joinPrefix = (email: string) => `join:${email}:`;
 const licKey = (owner: string, email: string) => `lic:${owner}:${email}`;
+const requestKey = (owner: string, email: string) => `req:${owner}:${email}`;
+const requestPrefix = (owner: string) => `req:${owner}:`;
 
 async function readJson<T>(env: Env, key: string): Promise<T | null> {
   const raw = await env.SYNC_KV.get(key);
@@ -808,7 +820,17 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     }
     const license = isOwner ? null : licenseFor(await readJson<any>(env, licKey(owner, user.email)));
     if (license?.expired) {
-      return json({ ok: false, code: "license_expired", error: "Thời hạn xem dự án đã hết. Nhờ người mời gia hạn.", license }, 403);
+      const pending = isOwner ? null : await readJson<RequestRecord>(env, requestKey(owner, user.email));
+      return json(
+        {
+          ok: false,
+          code: "license_expired",
+          error: "Thời hạn xem dự án đã hết. Gửi yêu cầu để trưởng dự án gia hạn.",
+          license,
+          request: pending,
+        },
+        403
+      );
     }
     const board = await readJson<SharedBoard>(env, boardKey(owner));
     if (!board) return json({ ok: false, error: "Chủ dự án chưa đồng bộ bảng việc." }, 404);
@@ -830,6 +852,74 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     });
   }
 
+  if (path === "/api/projects/leave" && request.method === "DELETE") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const owner = cleanEmail(url.searchParams.get("owner"));
+    const projectId = clip(url.searchParams.get("projectId"), 40);
+    if (!owner || !projectId) return json({ ok: false, error: "Thiếu thông tin dự án." }, 400);
+    await env.SYNC_KV.delete(joinKey(user.email, owner, projectId));
+    await env.SYNC_KV.delete(requestKey(owner, user.email));
+    const member = await findMember(env, owner, user.email);
+    if (member) {
+      member.projects = member.projects.filter((p) => p.id !== projectId);
+      if (member.projects.length) {
+        await env.SYNC_KV.put(memberKey(owner, user.email), JSON.stringify(member));
+      } else {
+        await env.SYNC_KV.delete(memberKey(owner, user.email));
+        await env.SYNC_KV.delete(licKey(owner, user.email));
+      }
+    }
+    return json({ ok: true });
+  }
+
+  if (path === "/api/projects/request" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const owner = cleanEmail(body?.owner);
+    const projectId = clip(body?.projectId, 40);
+    const note = clip(body?.note, 240).trim();
+    if (!owner || !projectId) return json({ ok: false, error: "Thiếu thông tin dự án." }, 400);
+    if (owner === user.email) return json({ ok: false, error: "Đây là dự án của chính bạn." }, 400);
+    const member = await findMember(env, owner, user.email);
+    const project = member?.projects.find((p) => p.id === projectId);
+    if (!member || !project) return json({ ok: false, error: "Bạn chưa tham gia dự án này." }, 403);
+    const license = licenseFor(await readJson<any>(env, licKey(owner, user.email)));
+    if (!license || !license.expired) {
+      return json({ ok: false, error: "Quyền xem của bạn đang không bị giới hạn." }, 400);
+    }
+    const request: RequestRecord = {
+      email: user.email,
+      name: user.name || user.email,
+      owner,
+      projectId,
+      projectName: project.name,
+      note,
+      createdAt: new Date().toISOString(),
+    };
+    await env.SYNC_KV.put(requestKey(owner, user.email), JSON.stringify(request));
+    return json({ ok: true, request });
+  }
+
+  if (path === "/api/projects/requests" && request.method === "GET") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const list = await env.SYNC_KV.list({ prefix: requestPrefix(user.email) });
+    const records = (await Promise.all(list.keys.map((k) => readJson<RequestRecord>(env, k.name)))).filter(Boolean) as RequestRecord[];
+    records.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return json({ ok: true, requests: records });
+  }
+
+  if (path === "/api/projects/requests" && request.method === "DELETE") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const email = cleanEmail(url.searchParams.get("email"));
+    if (!email) return json({ ok: false, error: "Thiếu email." }, 400);
+    await env.SYNC_KV.delete(requestKey(user.email, email));
+    return json({ ok: true });
+  }
+
   if (path === "/api/users" && request.method === "GET") {
     const user = await readUser(request, env);
     if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
@@ -839,6 +929,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       records.map(async (m) => ({
         ...m,
         license: licenseFor(await readJson<any>(env, licKey(user.email, m.email))),
+        request: await readJson<RequestRecord>(env, requestKey(user.email, m.email)),
       }))
     );
     users.sort((a, b) => String(b.joinedAt).localeCompare(String(a.joinedAt)));
@@ -862,6 +953,28 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const plan = days === 7 ? "week" : days === 30 ? "month" : days === 365 ? "year" : "custom";
     const record = { plan, days, startedAt: new Date().toISOString(), expiresAt, updatedAt: new Date().toISOString() };
     await env.SYNC_KV.put(licKey(user.email, email), JSON.stringify(record));
+    await env.SYNC_KV.delete(requestKey(user.email, email));
+    return json({ ok: true, license: licenseFor(record) });
+  }
+
+  if (path === "/api/users/lock" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const email = cleanEmail(body?.email);
+    if (!email) return json({ ok: false, error: "Thiếu email." }, 400);
+    const member = await findMember(env, user.email, email);
+    if (!member) return json({ ok: false, error: "Người này chưa tham gia dự án nào của bạn." }, 404);
+    const now = new Date().toISOString();
+    const record = {
+      plan: "locked",
+      days: 0,
+      startedAt: now,
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+      updatedAt: now,
+    };
+    await env.SYNC_KV.put(licKey(user.email, email), JSON.stringify(record));
+    await env.SYNC_KV.delete(requestKey(user.email, email));
     return json({ ok: true, license: licenseFor(record) });
   }
 
@@ -881,6 +994,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     if (!email) return json({ ok: false, error: "Thiếu email." }, 400);
     await env.SYNC_KV.delete(memberKey(user.email, email));
     await env.SYNC_KV.delete(licKey(user.email, email));
+    await env.SYNC_KV.delete(requestKey(user.email, email));
     const list = await env.SYNC_KV.list({ prefix: joinPrefix(email) });
     const ownedPrefix = `${joinPrefix(email)}${user.email}:`;
     for (const key of list.keys) {

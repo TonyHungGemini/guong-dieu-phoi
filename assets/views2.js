@@ -344,7 +344,7 @@
       <div class="card-h">
         <div>
           <div class="card-t"><span class="card-idx">00</span> Dự án &amp; mã tham gia</div>
-          <div class="card-sub">Mỗi dự án có mã riêng. Copy mã hoặc gửi email mời người liên quan.</div>
+          <div class="card-sub">Mỗi dự án có mã riêng. Bạn là trưởng dự án — mời người và quản lý thời gian xem.</div>
         </div>
         <div class="proj-head-actions">
           <button class="btn btn-ghost btn-sm" type="button" data-join-project>${icon("users")} Tham gia bằng mã</button>
@@ -355,13 +355,13 @@
         ${projects.map((p) => `<article class="proj-card${p.id === activeId ? " on" : ""}">
           <button class="proj-main" type="button" data-set-project="${esc(p.id)}" title="Chọn dự án này">
             <span class="proj-name">${esc(p.name)}</span>
-            <span class="proj-meta">${p.id === activeId ? "Đang chọn · " : ""}${memberCount} thành viên</span>
+            <span class="proj-meta"><b class="proj-lead-tag">Trưởng dự án</b> · ${memberCount} người trong tổ</span>
           </button>
           <button class="proj-code" type="button" data-copy-code="${esc(p.joinCode)}" title="Copy mã tham gia">${esc(p.joinCode)}</button>
           <button class="proj-invite" type="button" data-invite-project="${esc(p.id)}">${icon("send")} Mời</button>
         </article>`).join("")}
       </div>
-      <p class="proj-note">${icon("alert")} Người nhận đăng nhập Google rồi nhập mã để xem bảng việc của dự án này. Bạn theo dõi ai đã tham gia ở phần “Người dùng &amp; thời hạn”.</p>
+      <p class="proj-note">${icon("alert")} Người nhận đăng nhập Google rồi nhập mã để xem bảng việc của dự án này. Thành viên chỉ xem; bạn cấp thời hạn và xử lý yêu cầu gia hạn ở “Người dùng &amp; thời hạn”.</p>
     </section>`;
   }
 
@@ -380,7 +380,7 @@
         ${items.map((item) => `<article class="proj-card">
           <button class="proj-main" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}" title="Xem bảng việc của dự án">
             <span class="proj-name">${esc(item.projectName)}</span>
-            <span class="proj-meta">Chủ: ${esc(item.ownerName)} · chỉ xem</span>
+            <span class="proj-meta">Trưởng dự án: ${esc(item.ownerName)} · chỉ xem</span>
           </button>
           <button class="proj-invite" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}">${icon("external")} Xem</button>
           <button class="proj-leave" type="button" data-leave-shared="${esc(item.owner)}|${esc(item.projectId)}" title="Bỏ theo dõi" aria-label="Bỏ theo dõi dự án ${esc(item.projectName)}">${icon("x")}</button>

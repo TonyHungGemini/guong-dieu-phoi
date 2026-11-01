@@ -575,6 +575,50 @@
   .comment-form .btn span { display: none; }
   .comment-form .btn .ico { width: 15px; height: 15px; }
 }
+/* ---------- trưởng dự án & yêu cầu gia hạn ---------- */
+.proj-lead-tag {
+  display: inline-block; padding: 1px 5px; border-radius: 4px;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 8px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.um-req-line { display: flex; align-items: center; gap: 5px; margin-top: 3px; color: var(--accent); font-size: 9.5px; font-weight: 650; line-height: 1.4; }
+.um-req-line .ico { width: 12px; height: 12px; flex: none; }
+.um-requests {
+  margin-bottom: 14px; padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--card));
+}
+.um-req-title { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 10px; font-weight: 750; letter-spacing: 0.04em; text-transform: uppercase; color: var(--accent); }
+.um-req-title .ico { width: 13px; height: 13px; }
+.um-req-title span { margin-left: auto; min-width: 16px; height: 16px; padding: 0 5px; border-radius: 99px; background: var(--accent); color: #fff; font-size: 8px; line-height: 16px; text-align: center; }
+.um-req-card { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-top: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line)); flex-wrap: wrap; }
+.um-req-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.um-req-main strong { font-size: 11px; font-weight: 750; }
+.um-req-main span { font-size: 9px; color: var(--muted); }
+.um-req-main em { margin-top: 2px; font-style: normal; font-size: 9.5px; color: var(--ink-2); }
+.um-req-acts { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+.um-req-acts .btn { height: 28px; font-size: 9px; }
+.um-req-acts .icon-btn { width: 26px; height: 26px; }
+
+/* ---------- chế độ chỉ xem: hết hạn & xin gia hạn ---------- */
+.shared-lock { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 8px 2px; }
+.shared-lock-ico {
+  display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 2px;
+  border-radius: 12px; background: var(--accent-soft); color: var(--accent);
+}
+.shared-lock-ico .ico { width: 20px; height: 20px; }
+.shared-lock strong { font-size: 15px; font-weight: 750; letter-spacing: -0.02em; }
+.shared-lock p { font-size: 11px; line-height: 1.6; color: var(--muted); }
+.shared-request { display: flex; flex-direction: column; gap: 7px; width: 100%; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.shared-request textarea { min-height: 58px; resize: vertical; font-size: 11.5px; }
+.shared-request .btn { align-self: flex-start; }
+.shared-req-state {
+  display: flex; align-items: center; gap: 7px; margin-top: 8px; padding: 9px 11px;
+  border-radius: 9px; background: var(--accent-soft); color: var(--accent);
+  font-size: 10.5px; font-weight: 650; line-height: 1.5;
+}
+.shared-req-state .ico { width: 14px; height: 14px; flex: none; }
+
 @media print {
   .sidebar, .topbar, .head-actions, .page-tools, .scrim, .toast-stack, .confetti-layer { display: none !important; }
   .app { display: block; }

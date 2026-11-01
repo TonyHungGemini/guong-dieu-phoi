@@ -23,6 +23,7 @@
 <link rel="stylesheet" href="assets/views2.css">
 <link rel="stylesheet" href="assets/views3.css">
 <link rel="stylesheet" href="assets/reports.css">
+<link rel="stylesheet" href="assets/tour.css">
 <script>
 try{
   var _a=JSON.parse(localStorage.getItem('guong.account'));
@@ -126,7 +127,7 @@ try{
 
       <div class="nav-label">Tổ đội</div>
       <button class="nav-item" data-view="team" onclick="App.go('team')">
-        <svg class="ico"><use href="#i-users"/></svg><span>Đội ngũ</span>
+        <svg class="ico"><use href="#i-users"/></svg><span>Đội ngũ</span><span class="nav-badge" id="navTeamBadge" hidden>0</span>
       </button>
       <button class="nav-item" data-view="reports" onclick="App.go('reports')">
         <svg class="ico"><use href="#i-chart"/></svg><span>Báo cáo</span>
@@ -186,6 +187,29 @@ try{
   </div>
 </div>
 
+<nav class="bottom-nav" id="bottomNav" aria-label="Điều hướng nhanh">
+  <button class="bn-item" type="button" data-view="dashboard" onclick="App.go('dashboard')">
+    <span class="bn-ico"><svg class="ico"><use href="#i-grid"/></svg></span>
+    <span class="bn-label">Tổng quan</span>
+  </button>
+  <button class="bn-item" type="button" data-view="today" onclick="App.go('today')">
+    <span class="bn-ico"><svg class="ico"><use href="#i-sun"/></svg><i class="bn-badge" id="bnTodayBadge" hidden>0</i></span>
+    <span class="bn-label">Hôm nay</span>
+  </button>
+  <button class="bn-fab" type="button" onclick="App.openTask()" aria-label="Giao việc mới">
+    <span class="bn-fab-btn"><svg class="ico"><use href="#i-plus"/></svg></span>
+    <span class="bn-label">Giao việc</span>
+  </button>
+  <button class="bn-item" type="button" data-view="board" onclick="App.go('board')">
+    <span class="bn-ico"><svg class="ico"><use href="#i-board"/></svg></span>
+    <span class="bn-label">Bảng việc</span>
+  </button>
+  <button class="bn-item" type="button" data-view="team" onclick="App.go('team')">
+    <span class="bn-ico"><svg class="ico"><use href="#i-users"/></svg><i class="bn-badge" id="bnTeamBadge" hidden>0</i></span>
+    <span class="bn-label">Đội ngũ</span>
+  </button>
+</nav>
+
 <div id="overlayRoot"></div>
 <div id="toastRoot" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
 <div id="confettiRoot" class="confetti-layer" aria-hidden="true"></div>
@@ -196,6 +220,7 @@ try{
 <script src="assets/views2.js" defer></script>
 <script src="assets/reports.js" defer></script>
 <script src="assets/actions.js" defer></script>
+<script src="assets/tour.js" defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>
 </html>

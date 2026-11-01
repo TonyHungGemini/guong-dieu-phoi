@@ -903,7 +903,7 @@
     });
     const licenseNote = data.license
       ? `Bạn xem dự án này ${data.license.expired ? "đã hết hạn" : `còn ${data.license.daysLeft} ngày`}.`
-      : "Chủ dự án chưa đặt thời hạn cho bạn.";
+      : "Trưởng dự án chưa đặt thời hạn cho bạn.";
     return `<div class="shared-stats">
         <div class="shared-stat"><b>${tasks.length}</b><span>việc</span></div>
         <div class="shared-stat"><b>${tasks.length - done}</b><span>đang mở</span></div>
@@ -932,8 +932,9 @@
         <div class="lic-empty">${icon("refresh")}<span>Đang tải…</span></div>
       </div>
       <div class="modal-foot">
-        <span class="foot-note">Chế độ chỉ xem — chỉ chủ dự án sửa được.</span>
+        <span class="foot-note">Chế độ chỉ xem — trưởng dự án giữ quyền sửa.</span>
         <div class="foot-right">
+          <button class="btn btn-ghost" type="button" data-leave-current="${esc(owner)}|${esc(projectId)}">Rời dự án</button>
           <button class="btn btn-ghost" type="button" data-shared-refresh>${icon("refresh")} Làm mới</button>
           <button class="btn btn-ghost" type="button" data-close-overlay>Đóng</button>
         </div>
@@ -947,20 +948,87 @@
       body.innerHTML = `<div class="lic-empty">${icon("refresh")}<span>Đang tải…</span></div>`;
       try {
         const data = await apiJson(`/api/project/view?owner=${encodeURIComponent(owner)}&projectId=${encodeURIComponent(projectId)}`);
-        sub.textContent = `Chủ dự án: ${data.owner.name} · cập nhật ${A.timeAgo(data.updatedAt)}`;
+        sub.textContent = `Trưởng dự án: ${data.owner.name} · cập nhật ${A.timeAgo(data.updatedAt)}`;
         body.innerHTML = sharedProjectBody(data);
       } catch (err) {
         sub.textContent = "Chưa tải được dự án";
-        const message = err.data && err.data.code === "license_expired"
-          ? "Thời hạn xem dự án đã hết. Nhờ người mời gia hạn trong mục Người dùng."
-          : err.status === 404
-            ? "Chủ dự án chưa đồng bộ bảng việc, hoặc dự án đã đổi mã."
-            : err.message;
-        body.innerHTML = `<div class="lic-empty">${icon("alert")}<span>${esc(message)}</span></div>`;
+        const expired = err.data && err.data.code === "license_expired";
+        const locked = expired && err.data.license && err.data.license.plan === "locked";
+        const removed = err.status === 403 && !expired;
+        const message = expired
+          ? locked
+            ? "Trưởng dự án đã tạm khoá quyền xem của bạn. Gửi yêu cầu để được mở lại."
+            : "Thời hạn xem dự án đã hết. Gửi yêu cầu để trưởng dự án gia hạn."
+          : removed
+            ? "Bạn không còn trong danh sách thành viên. Xin mã tham gia mới từ trưởng dự án để xem lại."
+            : err.status === 404
+              ? "Trưởng dự án chưa đồng bộ bảng việc, hoặc dự án đã đổi mã."
+              : err.message;
+        const pending = expired && err.data ? err.data.request : null;
+        const lockTitle = locked ? "Quyền xem đang bị tạm khoá" : expired ? "Quyền xem đã hết hạn" : removed ? "Không còn trong dự án" : "Chưa mở được dự án";
+        const lockIcon = locked ? "pause" : expired ? "clock" : removed ? "users" : "alert";
+        body.innerHTML = `<div class="shared-lock">
+          <span class="shared-lock-ico">${icon(lockIcon)}</span>
+          <strong>${esc(lockTitle)}</strong>
+          <p>${esc(message)}</p>
+          ${pending
+            ? `<div class="shared-req-state">${icon("bell")} Đã gửi yêu cầu ${esc(A.timeAgo(pending.createdAt))} — chờ trưởng dự án phản hồi.</div>`
+            : expired
+              ? `<form class="shared-request" data-request-form data-owner="${esc(owner)}" data-project="${esc(projectId)}">
+                  <label class="f-label" for="requestNote">Lời nhắn cho trưởng dự án (không bắt buộc)</label>
+                  <textarea class="input" id="requestNote" name="note" rows="2" maxlength="240" placeholder="Ví dụ: em cần xem thêm 2 tuần để chốt báo cáo."></textarea>
+                  <button class="btn btn-accent" type="submit">${icon("bell")} Gửi yêu cầu gia hạn</button>
+                </form>`
+              : ""}
+        </div>`;
       }
     };
     overlay.querySelector("[data-shared-refresh]").addEventListener("click", load);
+    const leaveBtn = overlay.querySelector("[data-leave-current]");
+    if (leaveBtn) {
+      leaveBtn.addEventListener("click", () => {
+        const [leaveOwner, leaveProject] = String(leaveBtn.dataset.leaveCurrent || "").split("|");
+        const name = entry ? entry.projectName : "dự án này";
+        if (!window.confirm(`Rời dự án “${name}”? Bạn cần mã tham gia để vào lại.`)) return;
+        A.closeOverlay(overlay);
+        leaveSharedProject(leaveOwner, leaveProject);
+      });
+    }
+    body.addEventListener("submit", async (event) => {
+      const form = event.target.closest("[data-request-form]");
+      if (!form) return;
+      event.preventDefault();
+      const submit = form.querySelector('button[type="submit"]');
+      if (submit) submit.disabled = true;
+      try {
+        const data = await apiJson("/api/projects/request", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            owner: form.dataset.owner,
+            projectId: form.dataset.project,
+            note: String(form.elements.note.value || "").trim(),
+          }),
+        });
+        form.outerHTML = `<div class="shared-req-state">${icon("bell")} Đã gửi yêu cầu ${esc(A.timeAgo(data.request.createdAt))} — chờ trưởng dự án phản hồi.</div>`;
+        A.toast("Đã gửi yêu cầu gia hạn tới trưởng dự án.", "success");
+      } catch (err) {
+        if (submit) submit.disabled = false;
+        A.toast(err.message || "Chưa gửi được yêu cầu.", "error");
+      }
+    });
     load();
+  }
+
+  async function leaveSharedProject(owner, projectId) {
+    A.removeJoinedProject(owner, projectId);
+    A.render({ animate: false });
+    try {
+      await apiJson(`/api/projects/leave?owner=${encodeURIComponent(owner)}&projectId=${encodeURIComponent(projectId)}`, { method: "DELETE" });
+    } catch (err) {
+      /* vẫn gỡ khỏi máy này; máy chủ dọn khi có mạng */
+    }
+    A.toast("Đã rời dự án khỏi danh sách theo dõi.", "info");
   }
 
   async function joinProject(code) {
@@ -1288,7 +1356,10 @@
           <div class="settings-title">${icon("spark")} Về GUỒNG</div>
           <p class="about-lead">GUỒNG giúp tổ nhóm nhìn rõ việc, giao đúng người và chốt báo cáo trong một chạm — để mỗi ngày bớt việc hơn.</p>
           <p>Thiết kế &amp; xây dựng bởi <strong>Tony Hùng</strong>. Chạy trên Cloudflare Workers, dữ liệu tách riêng theo tài khoản Google.</p>
-          <p class="about-ver">GUỒNG v1.1 · Ít việc hơn mỗi ngày.</p>
+          <div class="settings-actions">
+            <button class="btn btn-ghost" type="button" data-replay-tour>${icon("play")} Xem lại hướng dẫn</button>
+          </div>
+          <p class="about-ver">GUỒNG v1.2 · Ít việc hơn mỗi ngày.</p>
         </div>
       </div>
       <div class="modal-foot">
@@ -1327,23 +1398,47 @@
     return dt && !Number.isNaN(dt.getTime()) ? A.fmtShort(A.dateISO(dt)) : "—";
   }
 
+  async function refreshLeadRequests() {
+    if (!A.account || !A.account.email) {
+      A.pendingRequests = 0;
+      A.updateShell();
+      return;
+    }
+    try {
+      const data = await apiJson("/api/projects/requests");
+      A.pendingRequests = (data.requests || []).length;
+    } catch (err) {
+      A.pendingRequests = 0;
+    }
+    A.updateShell();
+  }
+  A.refreshLeadRequests = refreshLeadRequests;
+
   function userRow(user) {
     const license = user.license || null;
     const days = license ? license.daysLeft : null;
+    const locked = Boolean(license && license.plan === "locked");
     const state = !license ? "none" : license.expired ? "off" : days <= 7 ? "warn" : "ok";
     const status = !license
       ? "Chưa đặt hạn — xem không giới hạn"
-      : license.expired
-        ? `Đã hết hạn ${licenseDate(license.expiresAt)}`
-        : `Còn ${days} ngày · đến ${licenseDate(license.expiresAt)}`;
+      : locked
+        ? "Đang bị khoá quyền xem"
+        : license.expired
+          ? `Đã hết hạn ${licenseDate(license.expiresAt)}`
+          : `Còn ${days} ngày · đến ${licenseDate(license.expiresAt)}`;
     const projects = (user.projects || []).map((p) => `<span class="um-chip">${esc(p.name)}</span>`).join("");
     const seen = user.lastSeen ? A.timeAgo(user.lastSeen) : "vừa tham gia";
+    const request = user.request;
+    const requestLine = request
+      ? `<div class="um-req-line">${icon("bell")} Xin gia hạn${request.projectName ? ` “${esc(request.projectName)}”` : ""} · ${esc(A.timeAgo(request.createdAt))}${request.note ? ` · “${esc(request.note)}”` : ""}</div>`
+      : "";
     return `<div class="lic-row">
       <span class="lic-state ${state === "none" ? "" : state}" aria-hidden="true"></span>
       <div class="lic-main">
         <strong>${esc(user.name || user.email)}</strong>
         <span>${esc(user.email)} · xem lần cuối ${esc(seen)} · tham gia ${esc(licenseDate(user.joinedAt))}</span>
         <em class="${state}">${esc(status)}</em>
+        ${requestLine}
         <div class="um-chips">${projects}</div>
       </div>
       <div class="lic-acts">
@@ -1352,15 +1447,33 @@
           <option value="30" selected>+1 tháng</option>
           <option value="365">+1 năm</option>
         </select>
-        <button class="btn btn-ghost btn-sm" type="button" data-um-grant="${esc(user.email)}">${icon("refresh")} ${license ? "Gia hạn" : "Cấp hạn"}</button>
+        <button class="btn ${request ? "btn-accent" : "btn-ghost"} btn-sm" type="button" data-um-grant="${esc(user.email)}">${icon("refresh")} ${license ? "Gia hạn" : "Cấp hạn"}</button>
+        ${license && !license.expired ? `<button class="icon-btn lic-del" type="button" data-um-lock="${esc(user.email)}" aria-label="Khoá quyền xem của ${esc(user.email)}" title="Khoá quyền xem">${icon("pause")}</button>` : ""}
         ${license ? `<button class="icon-btn lic-del" type="button" data-um-revoke="${esc(user.email)}" aria-label="Bỏ hạn của ${esc(user.email)}" title="Bỏ hạn">${icon("x")}</button>` : ""}
         <button class="icon-btn lic-del" type="button" data-um-remove="${esc(user.email)}" aria-label="Xoá ${esc(user.email)}" title="Xoá khỏi dự án">${icon("trash")}</button>
       </div>
     </div>`;
   }
 
+  function requestCard(user) {
+    const req = user.request;
+    return `<article class="um-req-card">
+      <div class="um-req-main">
+        <strong>${esc(user.name || user.email)}</strong>
+        <span>${esc(user.email)}${req.projectName ? ` · ${esc(req.projectName)}` : ""} · ${esc(A.timeAgo(req.createdAt))}</span>
+        ${req.note ? `<em>“${esc(req.note)}”</em>` : ""}
+      </div>
+      <div class="um-req-acts">
+        <button class="btn btn-accent btn-sm" type="button" data-um-answer="${esc(user.email)}" data-days="7">+7 ngày</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-um-answer="${esc(user.email)}" data-days="30">+30 ngày</button>
+        <button class="icon-btn lic-del" type="button" data-um-dismiss="${esc(user.email)}" aria-label="Bỏ yêu cầu của ${esc(user.email)}" title="Bỏ qua yêu cầu">${icon("x")}</button>
+      </div>
+    </article>`;
+  }
+
   function usersModalHtml(state) {
     const users = state.users || [];
+    const requests = users.filter((u) => u.request);
     const active = users.filter((u) => !u.license || !u.license.expired).length;
     const owner = state.owner || "chưa đăng nhập";
     let body = "";
@@ -1373,18 +1486,24 @@
     } else {
       body = `<div class="lic-list">${users.map(userRow).join("")}</div>`;
     }
+    const reqSection = requests.length
+      ? `<div class="um-requests">
+          <div class="um-req-title">${icon("bell")} Yêu cầu gia hạn <span>${requests.length}</span></div>
+          ${requests.map(requestCard).join("")}
+        </div>`
+      : "";
     return `<div class="modal account-modal user-manager" role="dialog" aria-modal="true" aria-labelledby="usersTitle">
       <div class="modal-head">
         <div>
           <div class="modal-eyebrow">${icon("users")} QUẢN LÝ NGƯỜI DÙNG</div>
           <div class="modal-title" id="usersTitle">Người tham gia dự án</div>
-          <div class="modal-sub">${users.length} người · ${active} đang xem được · ${esc(owner)}</div>
+          <div class="modal-sub">${users.length} người · ${active} đang xem được${requests.length ? ` · ${requests.length} yêu cầu gia hạn` : ""} · ${esc(owner)}</div>
         </div>
         <button class="icon-btn modal-close" type="button" data-close-overlay aria-label="Đóng">${icon("x")}</button>
       </div>
       <div class="modal-body">
-        ${body}
-        <div class="settings-note" style="margin-top:14px">${icon("alert")}<span>Danh sách này do máy chủ ghi nhận khi người khác đăng nhập Google và nhập mã dự án của bạn. Đặt thời hạn để tự khoá quyền xem khi hết hạn; xoá để gỡ người khỏi danh sách hiện tại.</span></div>
+        ${reqSection}${body}
+        <div class="settings-note" style="margin-top:14px">${icon("alert")}<span>Bạn là trưởng dự án: cấp hoặc gia hạn thời gian xem, khoá khi cần và gỡ người khỏi danh sách. Thành viên bị khoá có thể gửi yêu cầu gia hạn ngay trong dự án.</span></div>
       </div>
       <div class="modal-foot">
         <span class="foot-note">Múi giờ tính theo thiết bị này.</span>
@@ -1402,7 +1521,10 @@
     wireUsers(overlay);
     try {
       const data = await apiJson("/api/users");
-      overlay.innerHTML = usersModalHtml({ users: data.users || [], owner });
+      const users = data.users || [];
+      A.pendingRequests = users.filter((u) => u.request).length;
+      A.updateShell();
+      overlay.innerHTML = usersModalHtml({ users, owner });
     } catch (err) {
       overlay.innerHTML = usersModalHtml({
         error: err.status === 401 ? "Đăng nhập Google để xem người tham gia dự án của bạn." : err.message,
@@ -1415,6 +1537,61 @@
   function wireUsers(overlay) {
     const refresh = overlay.querySelector("[data-um-refresh]");
     if (refresh) refresh.addEventListener("click", () => loadUsers(overlay));
+
+    overlay.querySelectorAll("[data-um-answer]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const email = btn.dataset.umAnswer;
+        const days = Number(btn.dataset.days) || 7;
+        btn.disabled = true;
+        try {
+          const data = await apiJson("/api/users/license", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email, days }),
+          });
+          A.toast(`Đã duyệt yêu cầu: ${LICENSE_LABEL[data.license?.plan] || `${days} ngày`} cho ${email}.`, "success");
+          await loadUsers(overlay);
+        } catch (err) {
+          btn.disabled = false;
+          A.toast(err.message, "error");
+        }
+      });
+    });
+
+    overlay.querySelectorAll("[data-um-dismiss]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const email = btn.dataset.umDismiss;
+        btn.disabled = true;
+        try {
+          await apiJson(`/api/projects/requests?email=${encodeURIComponent(email)}`, { method: "DELETE" });
+          A.toast(`Đã bỏ yêu cầu của ${email}.`, "info");
+          await loadUsers(overlay);
+        } catch (err) {
+          btn.disabled = false;
+          A.toast(err.message, "error");
+        }
+      });
+    });
+
+    overlay.querySelectorAll("[data-um-lock]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const email = btn.dataset.umLock;
+        if (!window.confirm(`Khoá quyền xem của ${email}? Họ vẫn ở danh sách và có thể gửi yêu cầu gia hạn.`)) return;
+        btn.disabled = true;
+        try {
+          await apiJson("/api/users/lock", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email }),
+          });
+          A.toast(`Đã khoá quyền xem của ${email}.`, "info");
+          await loadUsers(overlay);
+        } catch (err) {
+          btn.disabled = false;
+          A.toast(err.message, "error");
+        }
+      });
+    });
 
     overlay.querySelectorAll("[data-um-grant]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -1796,10 +1973,8 @@
     if (leaveSharedBtn) {
       const [owner, projectId] = String(leaveSharedBtn.dataset.leaveShared || "").split("|");
       const entry = A.joinedProjects().find((x) => x.owner === owner && x.projectId === projectId);
-      if (!window.confirm(`Bỏ theo dõi dự án “${entry ? entry.projectName : "này"}”?`)) return;
-      A.removeJoinedProject(owner, projectId);
-      A.render({ animate: false });
-      A.toast("Đã bỏ dự án khỏi danh sách theo dõi.", "info");
+      if (!window.confirm(`Rời dự án “${entry ? entry.projectName : "này"}”? Bạn cần mã tham gia để vào lại.`)) return;
+      leaveSharedProject(owner, projectId);
       return;
     }
     const inviteProjectBtn = event.target.closest("[data-invite-project]");
@@ -2359,6 +2534,10 @@
       A.focus.taskId = first ? first.id : null;
     }
     A.route();
+    A.refreshLeadRequests();
+    window.addEventListener("guong:account", () => {
+      window.setTimeout(() => A.refreshLeadRequests(), 500);
+    });
     window.addEventListener("beforeunload", () => A.save());
   }
 

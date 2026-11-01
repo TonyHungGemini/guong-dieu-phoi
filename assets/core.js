@@ -1465,19 +1465,27 @@
       else if (finalMs.daysLeft === 0) days.textContent = "về đích hôm nay";
       else days.textContent = `quá ${-finalMs.daysLeft} ngày`;
     }
-    document.querySelectorAll(".nav-item[data-view]").forEach((btn) => {
+    document.querySelectorAll(".nav-item[data-view], .bn-item[data-view]").forEach((btn) => {
       const active = btn.dataset.view === App.view;
       btn.classList.toggle("active", active);
       if (active) btn.setAttribute("aria-current", "page");
       else btn.removeAttribute("aria-current");
     });
-    const badge = document.getElementById("navTodayBadge");
-    if (badge) {
-      const urgent = new Set(metrics.overdueTasks.map((t) => t.id).concat(metrics.dueTodayTasks.map((t) => t.id))).size;
+    const urgent = new Set(metrics.overdueTasks.map((t) => t.id).concat(metrics.dueTodayTasks.map((t) => t.id))).size;
+    ["navTodayBadge", "bnTodayBadge"].forEach((id) => {
+      const badge = document.getElementById(id);
+      if (!badge) return;
       badge.textContent = String(urgent);
       badge.hidden = urgent === 0;
       badge.title = `${urgent} việc cần chú ý hôm nay`;
-    }
+    });
+    const teamBadge = document.querySelectorAll("#bnTeamBadge, #navTeamBadge");
+    const pending = Number(App.pendingRequests) || 0;
+    teamBadge.forEach((badge) => {
+      badge.textContent = String(pending);
+      badge.hidden = pending === 0;
+      badge.title = `${pending} yêu cầu gia hạn đang chờ bạn`;
+    });
     const next = App.nextMilestone();
     const msTitle = document.getElementById("sideMsTitle");
     const msMeta = document.getElementById("sideMsMeta");
