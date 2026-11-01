@@ -1,6 +1,10 @@
 node_modules/
 dist/
 dist-report/
+dist-site/
+.wrangler/
+.dev.vars*
+!.dev.vars.example
 data/
 .DS_Store
 *.log

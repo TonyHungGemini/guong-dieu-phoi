@@ -150,3 +150,31 @@ Biến môi trường (xem `.env.example`): `PORT`, `APP_URL`, `GEMINI_API_KEY`.
 Không commit `.env`, thư mục `data/`, `dist/`, `dist-report/`.
 
 Lưu ý: GitHub Pages chỉ chạy được phần tĩnh của GUỒNG; các API `/api/*` và `/report/` cần server Express, nên bản đầy đủ phải deploy lên môi trường có Node (Cloud Run).
+
+## Deploy Cloudflare Workers + KV (0đ)
+
+Bản đầy đủ chạy trên Cloudflare Worker: tĩnh tại Workers Assets, đồng bộ trong KV, AI gọi thẳng Gemini REST.
+
+- Địa chỉ: https://guong-dieu-phoi.tonyhunggemini.workers.dev
+- GUỒNG: `/` · Bee Report: `/report/` · API: `/api/*` (cần mã truy cập do chủ dự án giữ)
+
+```bash
+npx wrangler login
+npx wrangler kv namespace create SYNC_KV   # dán id vào wrangler.jsonc
+npx wrangler secret put GEMINI_API_KEY     # key Gemini của bạn
+npx wrangler secret put ACCESS_CODE        # mã mở kho báo cáo
+npx wrangler secret put SESSION_SECRET     # chuỗi ngẫu nhiên dài
+npm run deploy                             # build:site + wrangler deploy
+```
+
+- `npm run build:site` tạo `dist-site/`: bộ khung GUỒNG + `dist-report/` lồng tại `/report/`.
+- `npm run preview:cf` chạy thử Worker ở máy (`wrangler dev`).
+- Không có `ACCESS_CODE` thì API mở công khai; đặt mã để chặn truy cập dữ liệu báo cáo.
+- `ACCESS_CODE` chỉ có hiệu lực phía server; trang `/` và `/report/` vẫn tải được nhưng API trả 401 cho tới khi nhập mã.
+- Seed dữ liệu cũ vào KV (một lần):
+
+```bash
+npx wrangler kv key put --binding SYNC_KV "sync:default_user" --path ../backup/kv-seed-default_user.json --remote
+```
+
+Push lên `main` sẽ tự deploy nếu repo có secrets `CLOUDFLARE_API_TOKEN` và `CLOUDFLARE_ACCOUNT_ID` (workflow `.github/workflows/deploy.yml`).

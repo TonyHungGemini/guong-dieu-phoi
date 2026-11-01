@@ -7,9 +7,12 @@
     "dev": "tsx server.ts",
     "dev:report": "vite --config report/vite.config.ts",
     "build": "vite build --config report/vite.config.ts && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build:site": "vite build --config report/vite.config.ts && node scripts/build-site.mjs",
+    "deploy": "npm run build:site && wrangler deploy",
+    "preview:cf": "npm run build:site && wrangler dev",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
-    "clean": "rm -rf dist dist-report",
+    "clean": "rm -rf dist dist-report dist-site",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -27,6 +30,7 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
@@ -34,6 +38,6 @@
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
-    "@types/express": "^4.17.21"
+    "wrangler": "^4.156.0"
   }
 }

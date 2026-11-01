@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "guong-dieu-phoi",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist-site",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "kv_namespaces": [
+    {
+      "binding": "SYNC_KV",
+      "id": "03bb6377433f4fe998c84cb9d5d4fcc2"
+    }
+  ],
+  "vars": {
+    "GEMINI_MODEL": "gemini-2.5-flash"
+  },
+  "observability": {
+    "enabled": true
+  }
+}
