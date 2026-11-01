@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="beeBg512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="beeBody512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="wing512" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#c7d2fe" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#beeBg512)"/>
+  <circle cx="256" cy="256" r="200" fill="#ffffff" fill-opacity="0.04"/>
+  <!-- Wings -->
+  <ellipse cx="205" cy="165" rx="55" ry="90" fill="url(#wing512)" transform="rotate(-30 205 165)"/>
+  <ellipse cx="307" cy="165" rx="55" ry="90" fill="url(#wing512)" transform="rotate(30 307 165)"/>
+  <!-- Bee Body -->
+  <ellipse cx="256" cy="275" rx="120" ry="100" fill="url(#beeBody512)"/>
+  <!-- Stripes -->
+  <path d="M175 240 Q256 220 337 240 Q335 275 337 310 Q256 290 175 310 Z" fill="#1e1b4b"/>
+  <path d="M195 340 Q256 325 317 340 Q310 355 290 368 Q256 375 222 368 Z" fill="#1e1b4b"/>
+  <!-- Bee Head & Antennae -->
+  <circle cx="256" cy="185" r="70" fill="url(#beeBody512)"/>
+  <path d="M225 125 Q205 75 175 85" stroke="#1e1b4b" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <circle cx="170" cy="85" r="14" fill="#fbbf24"/>
+  <path d="M287 125 Q307 75 337 85" stroke="#1e1b4b" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <circle cx="342" cy="85" r="14" fill="#fbbf24"/>
+  <!-- Cute Eyes & Smile -->
+  <circle cx="225" cy="175" r="12" fill="#1e1b4b"/>
+  <circle cx="229" cy="170" r="4" fill="#ffffff"/>
+  <circle cx="287" cy="175" r="12" fill="#1e1b4b"/>
+  <circle cx="291" cy="170" r="4" fill="#ffffff"/>
+  <path d="M240 200 Q256 215 272 200" stroke="#1e1b4b" stroke-width="8" stroke-linecap="round" fill="none"/>
+  <!-- Cheeks -->
+  <circle cx="205" cy="192" r="10" fill="#f43f5e" fill-opacity="0.4"/>
+  <circle cx="307" cy="192" r="10" fill="#f43f5e" fill-opacity="0.4"/>
+  <!-- Clipboard & Pen -->
+  <rect x="290" y="260" width="80" height="100" rx="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="6" transform="rotate(12 290 260)"/>
+  <path d="M310 280 L350 288 M310 300 L345 307 M310 320 L335 325" stroke="#64748b" stroke-width="6" stroke-linecap="round" transform="rotate(12 290 260)"/>
+  <path d="M360 250 L380 230 L390 240 L370 260 Z" fill="#10b981"/>
+  <!-- Green Check Badge -->
+  <circle cx="360" cy="350" r="38" fill="#10b981" stroke="#ffffff" stroke-width="6"/>
+  <path d="M342 350 L354 362 L378 338" stroke="#ffffff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

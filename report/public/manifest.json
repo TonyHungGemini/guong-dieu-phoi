@@ -1,0 +1,50 @@
+{
+  "short_name": "Bee Report",
+  "name": "Bee Report - Quản Lý Báo Cáo",
+  "description": "Smart PWA Bee Assistant for managing, scheduling, AI summarizing, and automated report workflows.",
+  "icons": [
+    {
+      "src": "/report/icon-192.svg",
+      "type": "image/svg+xml",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/report/icon-512.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/report/",
+  "background_color": "#0f172a",
+  "theme_color": "#2563eb",
+  "display": "standalone",
+  "orientation": "any",
+  "categories": [
+    "productivity",
+    "utilities",
+    "business"
+  ],
+  "shortcuts": [
+    {
+      "name": "Thêm Báo Cáo Mới",
+      "short_name": "Thêm mới",
+      "description": "Tạo hoặc tải lên báo cáo mới",
+      "url": "/report/?action=add"
+    },
+    {
+      "name": "Lịch Báo Cáo",
+      "short_name": "Lịch làm việc",
+      "description": "Xem lịch trình gửi báo cáo",
+      "url": "/report/?view=calendar"
+    },
+    {
+      "name": "Cấu hình Automation Agent",
+      "short_name": "Automation",
+      "description": "Quản lý Agent tự động gửi email",
+      "url": "/report/?view=agent"
+    }
+  ],
+  "scope": "/report/"
+}

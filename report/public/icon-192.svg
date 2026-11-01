@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <defs>
+    <linearGradient id="beeBg192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4f46e5"/>
+      <stop offset="100%" stop-color="#312e81"/>
+    </linearGradient>
+    <linearGradient id="beeBody192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="wing192" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#c7d2fe" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="42" fill="url(#beeBg192)"/>
+  <!-- Wings -->
+  <ellipse cx="76" cy="62" rx="20" ry="32" fill="url(#wing192)" transform="rotate(-30 76 62)"/>
+  <ellipse cx="116" cy="62" rx="20" ry="32" fill="url(#wing192)" transform="rotate(30 116 62)"/>
+  <!-- Bee Body -->
+  <ellipse cx="96" cy="105" rx="46" ry="38" fill="url(#beeBody192)"/>
+  <!-- Stripes -->
+  <path d="M65 92 Q96 85 127 92 Q126 105 127 118 Q96 110 65 118 Z" fill="#1e1b4b"/>
+  <path d="M72 130 Q96 124 120 130 Q117 136 109 141 Q96 144 83 141 Z" fill="#1e1b4b"/>
+  <!-- Bee Head & Antennae -->
+  <circle cx="96" cy="70" r="26" fill="url(#beeBody192)"/>
+  <path d="M85 48 Q77 30 65 34" stroke="#1e1b4b" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <circle cx="63" cy="34" r="5" fill="#fbbf24"/>
+  <path d="M107 48 Q115 30 127 34" stroke="#1e1b4b" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <circle cx="129" cy="34" r="5" fill="#fbbf24"/>
+  <!-- Face -->
+  <circle cx="85" cy="67" r="4.5" fill="#1e1b4b"/>
+  <circle cx="107" cy="67" r="4.5" fill="#1e1b4b"/>
+  <path d="M90 76 Q96 82 102 76" stroke="#1e1b4b" stroke-width="3" stroke-linecap="round" fill="none"/>
+  <!-- Clipboard -->
+  <rect x="110" y="98" width="30" height="38" rx="4" fill="#ffffff" stroke="#94a3b8" stroke-width="2" transform="rotate(10 110 98)"/>
+  <path d="M118 106 L133 109 M118 114 L131 117 M118 122 L128 124" stroke="#475569" stroke-width="2" stroke-linecap="round" transform="rotate(10 110 98)"/>
+  <!-- Green Check Badge -->
+  <circle cx="132" cy="132" r="14" fill="#10b981"/>
+  <path d="M125 132 L130 137 L139 127" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

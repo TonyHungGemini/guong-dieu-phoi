@@ -128,3 +128,25 @@ assets/apple-touch-icon.png
 - Đổi icon: thay các tệp PNG trong `assets/`, cập nhật `manifest.webmanifest` và danh sách `SHELL` trong `sw.js`.
 
 Không có thư viện ngoài, không có API, không cần cài đặt phụ thuộc.
+
+## Bản gộp GUỒNG + Bee Report (11/2026)
+
+Từ 01/11/2026 repo này chứa cả hai phần trên **cùng một server Express**:
+
+- `/` — bàn điều phối GUỒNG (tĩnh, dữ liệu `localStorage` khóa `guong.v2`)
+- `/report/` — mô-đun Bee Report (React + Vite, dữ liệu IndexedDB `DocuReportAI_DB`)
+- `/api/*` — API đồng bộ SSE (`/api/sync/*`) và AI Gemini (`/api/ai/*`), key nằm server-side
+
+Chạy trên máy:
+
+```bash
+npm install
+npm run dev        # Guồng ở http://localhost:3000, Bee Report ở /report/
+npm run build
+npm start
+```
+
+Biến môi trường (xem `.env.example`): `PORT`, `APP_URL`, `GEMINI_API_KEY`.
+Không commit `.env`, thư mục `data/`, `dist/`, `dist-report/`.
+
+Lưu ý: GitHub Pages chỉ chạy được phần tĩnh của GUỒNG; các API `/api/*` và `/report/` cần server Express, nên bản đầy đủ phải deploy lên môi trường có Node (Cloud Run).

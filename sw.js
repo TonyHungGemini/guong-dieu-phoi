@@ -1,4 +1,4 @@
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 const CACHE = `guong-${VERSION}`;
 const SHELL = [
   "./",
@@ -54,6 +54,9 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   const sameOrigin = url.origin === self.location.origin;
   const fonts = url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com";
+
+  // Bee Report module owns its own worker and data endpoints
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/report")) return;
 
   if (sameOrigin && request.mode === "navigate") {
     event.respondWith(
