@@ -932,7 +932,7 @@
       <div class="rp-gate-icon">${A.icon("link")}</div>
       <h2>Bản này chưa có API</h2>
       <p>GitHub Pages chỉ chạy phần tĩnh. Mở bản đầy đủ trên Cloudflare để dùng kho báo cáo.</p>
-      <a class="btn btn-accent" href="https://guong.tonyhunggemini.workers.dev/#/reports">Mở bản Cloudflare</a>
+      <a class="btn btn-accent" href="https://guong.tonyhung.workers.dev/#/reports">Mở bản Cloudflare</a>
     </section>`;
   }
 

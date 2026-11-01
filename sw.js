@@ -1,4 +1,4 @@
-const VERSION = "1.5.4";
+const VERSION = "1.5.5";
 const CACHE = `guong-${VERSION}`;
 const SHELL = [
   "./",
