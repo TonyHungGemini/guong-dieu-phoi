@@ -1,9 +1,11 @@
-# GUỒNG — Bàn điều phối dự án App
+# GUỒNG — Ít việc hơn mỗi ngày
 
-Ứng dụng quản lý giao việc gọn, trực quan cho tổ quản trị đang xây dựng App.
+GUỒNG giúp tổ nhóm nhìn rõ việc, giao đúng người và chốt báo cáo trong một chạm — để mỗi ngày bớt việc hơn.
+
+**Thiết kế & xây dựng:** Tony Hùng.
 Chạy hoàn toàn trên trình duyệt, không cần máy chủ, không cần bước build. Cài được như PWA và mở lại khi mất mạng.
 
-**Bản chạy trực tuyến:** <https://tonyhunggemini.github.io/guong-dieu-phoi/>
+**Bản chạy trực tuyến:** <https://guong.tonyhunggemini.workers.dev/> (bản đầy đủ) · <https://tonyhunggemini.github.io/guong-dieu-phoi/> (bản tĩnh)
 
 **Mã nguồn:** <https://github.com/TonyHungGemini/guong-dieu-phoi>
 
@@ -156,7 +158,7 @@ Lưu ý: GitHub Pages chỉ chạy được phần tĩnh của GUỒNG; các API
 
 Bản đầy đủ chạy trên Cloudflare Worker: tĩnh tại Workers Assets, đồng bộ trong KV, AI gọi thẳng Gemini REST.
 
-- Địa chỉ: https://guong-dieu-phoi.tonyhunggemini.workers.dev
+- Địa chỉ: https://guong.tonyhunggemini.workers.dev
 - GUỒNG + kho báo cáo: `/` · Bee Report gốc: `/report/` · API: `/api/*` (cần mã truy cập do chủ dự án giữ)
 - Đăng nhập Google trong mục **Báo cáo** để mở kho theo email; dữ liệu lưu ở KV với khóa `sync:<email>`, đồng bộ SSE giữa máy tính và điện thoại.
 
@@ -166,7 +168,8 @@ Google Identity Services chỉ cấp token khi origin nằm trong OAuth client `
 
 1. Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web).
 2. **Authorized JavaScript origins** thêm:
-   - `https://guong-dieu-phoi.tonyhunggemini.workers.dev`
+   - `https://guong.tonyhunggemini.workers.dev`
+   - `https://guong-dieu-phoi.tonyhunggemini.workers.dev` (địa chỉ cũ, giữ trong thời gian chuyển)
    - `http://localhost:3100` (khi chạy `wrangler dev --port 3100`)
 3. Lưu, đợi ~5 phút rồi đăng nhập lại. Nếu thiếu, Google báo `origin_mismatch`.
 4. App đang ở chế độ External/Testing thì phải thêm email người dùng vào **Audience → Test users**.

@@ -336,6 +336,32 @@
     </div>`;
   }
 
+  function projectStrip() {
+    const projects = A.projects();
+    const activeId = A.DATA.settings.activeProjectId;
+    const memberCount = A.members().length;
+    return `<section class="card team-projects">
+      <div class="card-h">
+        <div>
+          <div class="card-t"><span class="card-idx">00</span> Dự án &amp; mã tham gia</div>
+          <div class="card-sub">Mỗi dự án có mã riêng. Copy mã hoặc gửi email mời người liên quan.</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" data-add-project>${icon("plus")} Dự án mới</button>
+      </div>
+      <div class="proj-list">
+        ${projects.map((p) => `<article class="proj-card${p.id === activeId ? " on" : ""}">
+          <button class="proj-main" type="button" data-set-project="${esc(p.id)}" title="Chọn dự án này">
+            <span class="proj-name">${esc(p.name)}</span>
+            <span class="proj-meta">${p.id === activeId ? "Đang chọn · " : ""}${memberCount} thành viên</span>
+          </button>
+          <button class="proj-code" type="button" data-copy-code="${esc(p.joinCode)}" title="Copy mã tham gia">${esc(p.joinCode)}</button>
+          <button class="proj-invite" type="button" data-invite-project="${esc(p.id)}">${icon("send")} Mời</button>
+        </article>`).join("")}
+      </div>
+      <p class="proj-note">${icon("alert")} Mã tham gia và danh sách mời thuộc không gian này. Chia sẻ bảng việc giữa nhiều tài khoản sẽ bật ở bước đồng bộ dự án.</p>
+    </section>`;
+  }
+
   A.renderTeam = function () {
     const m = A.metrics();
     const members = A.members();
@@ -357,7 +383,7 @@
         <span class="setup-dot">${num}</span>
         <div><b>${esc(title)}</b><small>${esc(text)}</small></div>
       </li>`;
-      return `${head}<section class="card team-empty">
+      return `${head}${projectStrip()}<section class="card team-empty">
         <div class="te-main">
           <div class="setup-eyebrow">${icon("spark")} Bắt đầu</div>
           <h2 class="te-title">Bàn đã sẵn.<br><span>Thêm người vào tổ.</span></h2>
@@ -368,12 +394,12 @@
           </div>
         </div>
         <ol class="setup-steps te-steps">
-          ${step("1", "Thêm tên & vai trò", "Ví dụ: Lan Hương · Thiết kế")}
+          ${step("1", "Thêm tên & vai trò", "Ví dụ: Lan Hương · Kinh doanh")}
           ${step("2", "Đặt năng lực tuần", "Số việc một người giữ thoải mái")}
           ${step("3", "Giao việc đầu tiên", "Chọn người nhận, hạn và ưu tiên")}
         </ol>
       </section>
-      <div class="team-foot-note">${icon("alert")} Dữ liệu chỉ nằm trên thiết bị này. Thêm tên không tạo tài khoản đăng nhập cho người khác.</div>`;
+      <div class="team-foot-note">${icon("alert")} Dữ liệu bảng việc chỉ nằm trên thiết bị này. Thêm email để gửi lời mời kèm mã tham gia dự án.</div>`;
     }
 
     const summary = `<div class="team-summary">
@@ -389,6 +415,7 @@
           <div class="mc-id">
             <div class="mc-name">${esc(s.member.name)}${s.member.id === meId ? `<span class="mc-you">Bạn</span>` : ""}</div>
             <div class="mc-role">${esc(s.member.role)} · năng lực ${s.member.capacity} việc</div>
+            ${s.member.email ? `<div class="mc-email">${icon("send")} ${esc(s.member.email)}</div>` : ""}
           </div>
           <div class="mc-head-side">
             <span class="mc-load${s.state === "ok" ? "" : " " + s.state}" title="${s.activeCount} việc mở / ${s.member.capacity} năng lực">${s.load}%</span>
@@ -403,7 +430,10 @@
         </div>
         <div class="mc-foot">
           ${s.next ? A.dueChip(s.next) : `<span class="micro">Đã sạch việc</span>`}
-          <button class="btn btn-ghost" type="button" data-member-filter="${esc(s.member.id)}">Xem việc ${icon("arrow-right")}</button>
+          <span class="mc-foot-acts">
+            ${s.member.email ? `<button class="btn btn-ghost" type="button" data-invite-member="${esc(s.member.id)}">${icon("send")} Mời</button>` : ""}
+            <button class="btn btn-ghost" type="button" data-member-filter="${esc(s.member.id)}">Xem việc ${icon("arrow-right")}</button>
+          </span>
         </div>
       </article>`).join("")}
       <button class="member-add-card" type="button" data-add-member>
@@ -435,7 +465,7 @@
       </div>
     </section>` : "";
     const note = `<div class="team-foot-note">${icon("spark")} Tải = việc đang mở / năng lực tuần. Khi một người vượt 100%, hãy xem lại thứ tự ưu tiên trước khi giao thêm.</div>`;
-    return `${head}${summary}${cards}${unassignedCard}${note}`;
+    return `${head}${summary}${projectStrip()}${cards}${unassignedCard}${note}`;
   };
 
   /* ============================================================
@@ -476,7 +506,7 @@
       lines.push("");
     }
     lines.push(`Mốc kế tiếp: ${next ? `${next.title} · ${A.fmtLong(next.date)} (còn ${Math.max(0, next.daysLeft)} ngày)` : "Chưa đặt mốc dự án"}.`);
-    lines.push("Nguồn: GUỒNG — dữ liệu lưu trên thiết bị của tổ quản trị.");
+    lines.push("Nguồn: GUỒNG — dữ liệu lưu trên thiết bị này.");
     return lines.join("\n");
   };
 

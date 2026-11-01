@@ -139,6 +139,87 @@
   }
 
   /* ============================================================
+     NHẮC BÁO CÁO (dữ liệu từ Kho báo cáo)
+     ============================================================ */
+  const REPORT_FREQ = { daily: "hàng ngày", weekly: "hàng tuần", monthly: "hàng tháng", yearly: "hàng năm" };
+
+  function reminderWhen(item, bucket) {
+    if (bucket === "late") return `Quá hạn ${-item.gap} ngày · hạn ${A.fmtShort(item.due)}`;
+    const time = item.reminderTime ? ` · nhắc ${item.reminderTime}` : "";
+    if (bucket === "today") return `Hôm nay${time}`;
+    if (bucket === "tomorrow") return `Ngày mai${time}`;
+    return `${A.fmtShort(item.due)}${time}`;
+  }
+
+  function reminderRow(item, bucket) {
+    const freq = REPORT_FREQ[item.frequency] ? ` · ${REPORT_FREQ[item.frequency]}` : "";
+    return `<div class="rr-row">
+      <span class="rr-dot ${bucket}" aria-hidden="true"></span>
+      <button class="rr-main" type="button" data-report-open="${esc(item.id)}">
+        <span class="rr-title">${esc(item.title)}</span>
+        <span class="rr-meta">${esc(reminderWhen(item, bucket))}${item.project ? ` · ${esc(item.project)}` : ""}${freq}</span>
+      </button>
+      <span class="rr-acts">
+        <button class="rr-act rr-act-done" type="button" data-rp="complete" data-id="${esc(item.id)}" title="Chốt báo cáo, tự tạo nhắc kỳ tới">${icon("check")} <span>Xong</span></button>
+        <button class="rr-act" type="button" data-rp="extend" data-id="${esc(item.id)}" data-days="1" title="Dời hạn thêm 1 ngày">${icon("clock")} <span>+1</span></button>
+      </span>
+    </div>`;
+  }
+
+  function reminderBody() {
+    const data = A.reportReminders ? A.reportReminders() : null;
+    const late = data ? data.late : [];
+    const today = data ? data.today : [];
+    const tomorrow = data ? data.tomorrow : [];
+    const nowList = late.concat(today);
+    const head = `<div class="card-h">
+      <div>
+        <div class="card-t"><span class="card-idx">00</span> Nhắc báo cáo</div>
+        <div class="card-sub">Chốt xong là tự hẹn kỳ tiếp theo — không phải nộp lại từ đầu.</div>
+      </div>
+      <button class="card-link" type="button" data-go="reports">Mở kho báo cáo ${icon("arrow-right")}</button>
+    </div>`;
+    if (!data || !data.loaded) {
+      return `${head}<div class="rr-empty">${icon("clock")}<span>${data && !data.signedIn ? "Đăng nhập Google để xem nhắc báo cáo trên trang chính." : "Đang tải nhắc báo cáo…"}</span></div>`;
+    }
+    if (!nowList.length && !tomorrow.length) {
+      return `${head}<div class="rr-empty ok">${icon("check-circle")}<span>Hôm nay và ngày mai không còn báo cáo nào cần nộp.</span></div>`;
+    }
+    const section = (label, items, bucket, cls) => {
+      const shown = items.slice(0, 4);
+      const rest = items.length - shown.length;
+      return `<div class="rr-group ${cls || ""}">
+        <div class="rr-label">${esc(label)}<span>${items.length}</span></div>
+        ${shown.map((item) => reminderRow(item, item.gap < 0 ? "late" : bucket)).join("")}
+        ${rest > 0 ? `<button class="rr-more" type="button" data-go="reports">+${rest} báo cáo khác ${icon("arrow-right")}</button>` : ""}
+      </div>`;
+    };
+    const footNote = data.week.length
+      ? `Còn ${data.week.length} báo cáo trong 7 ngày tới.`
+      : tomorrow.length
+        ? "Ngoài ngày mai, 7 ngày tới chưa có hạn báo cáo nào."
+        : "7 ngày tới chưa có hạn báo cáo nào.";
+    return `${head}<div class="rr-body">
+      ${nowList.length ? section(late.length ? "Cần chốt hôm nay" : "Hôm nay", nowList, "today") : ""}
+      ${tomorrow.length ? section("Ngày mai", tomorrow, "tomorrow", "next") : ""}
+    </div>
+    <div class="rr-foot">${icon("spark")}<span>${footNote} Bấm <b>Xong</b> để chốt, <b>+1</b> để dời hạn một ngày.</span></div>`;
+  }
+
+  function reportReminderCard() {
+    return `<section class="card dash-reports" data-report-reminders aria-label="Nhắc báo cáo">${reminderBody()}</section>`;
+  }
+
+  window.addEventListener("guong:reports", () => {
+    const host = document.querySelector("[data-report-reminders]");
+    if (host) host.innerHTML = reminderBody();
+  });
+  document.addEventListener("click", (event) => {
+    const open = event.target.closest("[data-report-open]");
+    if (open && A.openReport) A.openReport(open.getAttribute("data-report-open"));
+  });
+
+  /* ============================================================
      DASHBOARD
      ============================================================ */
   A.renderDashboard = function () {
@@ -344,7 +425,7 @@
           <button class="btn btn-accent btn-sm" type="button" data-account-login>${icon("users")} Đăng nhập</button>
         </section>`
       : "";
-    return `${accountBanner}${hero}${kpis}${setup}<div class="dash-grid${msList.length ? "" : " no-ms"}">${priorityCard}${msCard}${streamsCard}${pulseCard}${actCard}</div>`;
+    return `${accountBanner}${hero}${kpis}${reportReminderCard()}${setup}<div class="dash-grid${msList.length ? "" : " no-ms"}">${priorityCard}${msCard}${streamsCard}${pulseCard}${actCard}</div>`;
   };
 
   /* ============================================================

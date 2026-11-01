@@ -18,6 +18,99 @@
    TEAM
    ============================================================ */
 .team-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+
+/* ---------- dự án & mã tham gia ---------- */
+.team-projects { margin-bottom: 16px; }
+.proj-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 9px; }
+.proj-card {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 11px; border: 1px solid var(--line); border-radius: 11px; background: var(--card-2);
+}
+.proj-card.on { border-color: var(--accent); background: var(--accent-soft); }
+.proj-main {
+  display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0;
+  padding: 0; border: none; background: none; text-align: left; font-family: inherit; cursor: pointer;
+}
+.proj-name { font-size: 11.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-meta { font-size: 9px; color: var(--muted); }
+.proj-code {
+  flex: none; padding: 4px 7px; border: 1px dashed var(--line-strong); border-radius: 6px;
+  background: var(--paper); color: var(--ink-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9.5px; font-weight: 700;
+  letter-spacing: 0.03em; cursor: pointer;
+}
+.proj-code:hover { border-color: var(--accent); color: var(--accent); }
+.proj-invite {
+  display: inline-flex; align-items: center; gap: 3px; flex: none;
+  height: 26px; padding: 0 8px; border: none; border-radius: 7px;
+  background: var(--ink); color: var(--paper);
+  font-family: inherit; font-size: 9.5px; font-weight: 700; cursor: pointer;
+}
+.proj-invite .ico { width: 11px; height: 11px; }
+.proj-invite:hover { opacity: 0.88; }
+.proj-note {
+  display: flex; align-items: flex-start; gap: 6px; margin-top: 10px;
+  font-size: 9.5px; line-height: 1.5; color: var(--muted);
+}
+.proj-note .ico { width: 12px; height: 12px; flex: none; margin-top: 1px; color: var(--accent); }
+
+/* ---------- lời mời ---------- */
+.invite-code {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 12px 14px; border: 1px dashed var(--line-strong); border-radius: var(--r-md); background: var(--card-2);
+}
+.invite-code > span { font-size: 8.5px; font-weight: 750; letter-spacing: 0.08em; color: var(--muted); }
+.invite-code strong {
+  flex: 1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 17px; letter-spacing: 0.08em; color: var(--accent);
+}
+.invite-code .btn { height: 28px; font-size: 9.5px; }
+.invite-preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px; line-height: 1.6; resize: vertical; color: var(--ink-2);
+  background: var(--card-2);
+}
+
+/* ---------- quản lý người dùng ---------- */
+.user-manager .modal-body { max-height: min(70vh, 620px); overflow-y: auto; }
+.lic-form {
+  padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--card-2);
+}
+.lic-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 110px auto; gap: 8px; align-items: end; }
+.lic-form-grid .f-label { font-size: 9px; }
+.lic-add { height: 38px; white-space: nowrap; }
+.lic-list { display: flex; flex-direction: column; margin-top: 14px; }
+.lic-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 2px; border-top: 1px solid var(--line);
+}
+.lic-row:first-child { border-top: none; }
+.lic-state { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--ok); }
+.lic-state.warn { background: var(--warn); }
+.lic-state.off { background: var(--danger); }
+.lic-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.lic-main strong { font-size: 11.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lic-main span { font-size: 9.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lic-main em { font-style: normal; font-size: 9.5px; font-weight: 700; color: var(--ok); }
+.lic-main em.warn { color: var(--warn); }
+.lic-main em.off { color: var(--danger); }
+.lic-acts { display: flex; align-items: center; gap: 5px; flex: none; }
+.lic-days { width: 112px; height: 30px; font-size: 9.5px; }
+.lic-acts .btn { height: 30px; font-size: 9.5px; }
+.lic-del { color: var(--muted); }
+.lic-del:hover { color: var(--danger); }
+.lic-empty {
+  display: flex; align-items: center; gap: 8px; padding: 18px 2px 6px;
+  font-size: 11px; color: var(--muted);
+}
+.lic-empty .ico { width: 16px; height: 16px; }
+@media (max-width: 640px) {
+  .lic-form-grid { grid-template-columns: 1fr; }
+  .lic-add { width: 100%; }
+  .lic-row { flex-wrap: wrap; }
+  .lic-acts { flex: 1 1 100%; justify-content: flex-end; }
+}
 .team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(268px, 1fr)); gap: 13px; }
 .member-card {
   display: flex; flex-direction: column; gap: 12px;
@@ -31,6 +124,9 @@
 .mc-id { flex: 1; min-width: 0; }
 .mc-name { display: flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 700; letter-spacing: -0.01em; }
 .mc-role { margin-top: 1px; font-size: 9.5px; color: var(--muted); }
+.mc-email { display: flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 9px; color: var(--info); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-email .ico { width: 10px; height: 10px; flex: none; }
+.mc-foot-acts { display: flex; align-items: center; gap: 4px; flex: none; }
 .mc-you {
   padding: 1px 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent);
   font-size: 7.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;

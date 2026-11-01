@@ -70,6 +70,7 @@
     detailId: null,
     detailTab: "content",
     detailOverlay: null,
+    extendOverlay: null,
     beeOpen: false,
     pinOpen: false,
     beePulse: 0,
@@ -197,10 +198,63 @@
   }
 
   function refresh() {
+    broadcastReminders();
     if (A.view !== "reports") return;
     A.render({ animate: false });
     if (R.detailId) refreshDetail();
   }
+
+  /* ---------- nhắc báo cáo cho trang Tổng quan ---------- */
+  function reminderSummary() {
+    const today = A.todayISO();
+    const buckets = { today: [], tomorrow: [], late: [], week: [] };
+    R.reports.forEach((report) => {
+      if (isDone(report)) return;
+      const iso = report.dueDate || report.date;
+      if (!iso) return;
+      const gap = A.daysFromToday(iso);
+      const item = {
+        id: report.id,
+        title: report.title || "Báo cáo",
+        project: report.project || "",
+        category: report.category || "",
+        due: iso,
+        gap,
+        reminderTime: report.reminderTime || "",
+        frequency: report.frequency || "none",
+      };
+      if (gap < 0) buckets.late.push(item);
+      else if (gap === 0) buckets.today.push(item);
+      else if (gap === 1) buckets.tomorrow.push(item);
+      else if (gap <= 7) buckets.week.push(item);
+    });
+    const byDue = (a, b) => a.due.localeCompare(b.due) || String(a.reminderTime).localeCompare(String(b.reminderTime));
+    Object.keys(buckets).forEach((key) => buckets[key].sort(byDue));
+    return Object.assign({ loaded: R.loaded, signedIn: Boolean(R.user) }, buckets);
+  }
+  function broadcastReminders() {
+    try {
+      window.dispatchEvent(new CustomEvent("guong:reports", { detail: reminderSummary() }));
+    } catch (err) {
+      /* trình duyệt cũ — bỏ qua */
+    }
+  }
+  A.reportReminders = reminderSummary;
+  A.openReport = function (id) {
+    const go = () => {
+      if (!findReport(id)) {
+        A.toast("Chưa tải được báo cáo này. Đăng nhập Google để xem kho báo cáo.", "info");
+        return;
+      }
+      openDetail(id);
+    };
+    if (A.view !== "reports") {
+      A.go("reports");
+      window.setTimeout(go, 90);
+    } else {
+      go();
+    }
+  };
   function scheduleRefresh() {
     window.clearTimeout(R.refreshTimer);
     R.refreshTimer = window.setTimeout(refresh, 250);
@@ -573,6 +627,134 @@
     if (changed) push().catch(() => {});
   }
 
+  /* ---------- thao tác 1 chạm: hoàn thành / gia hạn ---------- */
+  function cycleReminder(report) {
+    const freq = report.frequency;
+    if (!freq || freq === "none") return null;
+    const base = report.dueDate || report.date || A.todayISO();
+    const next = base > A.todayISO() ? shiftCycle(base, freq, 1) : nextDueDate(report);
+    if (!next) return null;
+    const seriesId = report.seriesId || report.id;
+    const exists = R.reports.some(
+      (item) => item.id !== report.id && !isDone(item) && (item.seriesId === seriesId || item.id === seriesId) && (item.dueDate || item.date) === next
+    );
+    if (exists) return null;
+    const now = new Date().toISOString();
+    const reminder = {
+      id: reportId(),
+      seriesId,
+      title: report.title || "Báo cáo",
+      project: report.project || "",
+      category: report.category || "",
+      frequency: freq,
+      date: next,
+      dueDate: next,
+      status: "To-do",
+      pinned: Boolean(report.pinned),
+      reminderTime: report.reminderTime || "",
+      submissionUrl: report.submissionUrl || "",
+      zaloPhone: report.zaloPhone || "",
+      agentEnabled: Boolean(report.agentEnabled),
+      notes: "",
+      createdAt: now,
+      updatedAt: now,
+      previousId: report.id,
+    };
+    R.reports.push(reminder);
+    logAction(reminder, "create", `Nhắc kỳ tới ${shortDate(next)} · từ «${report.title || "Báo cáo"}»`);
+    return reminder;
+  }
+
+  async function completeReport(report) {
+    if (!report) return;
+    if (isDone(report)) {
+      A.toast("Báo cáo này đã chốt rồi.", "info");
+      return;
+    }
+    const today = A.todayISO();
+    const now = new Date().toISOString();
+    const reminder = cycleReminder(report);
+    report.status = "Done";
+    report.completedAt = today;
+    report.lastProcessedDate = today;
+    report.updatedAt = now;
+    logAction(report, "done", reminder ? `Hoàn thành · nhắc kỳ tới ${shortDate(reminder.dueDate)}` : "Hoàn thành báo cáo");
+    R.reports = sortReports(R.reports);
+    window.setTimeout(() => A.confetti(), 40);
+    A.toast(
+      reminder
+        ? `Đã chốt «${report.title || "báo cáo"}». Nhắc mới: ${shortDate(reminder.dueDate)}.`
+        : `Đã chốt «${report.title || "báo cáo"}».`,
+      "success"
+    );
+    refresh();
+    try {
+      await push();
+    } catch (err) {
+      A.toast(err.message || "Chưa đồng bộ được — thay đổi vẫn lưu trên máy này.", "error");
+    }
+  }
+
+  async function extendReport(report, days) {
+    if (!report) return;
+    if (isDone(report)) {
+      A.toast("Báo cáo đã chốt — không cần gia hạn.", "info");
+      return;
+    }
+    const step = Math.max(1, Math.min(90, Math.round(Number(days) || 1)));
+    const today = A.todayISO();
+    const base = report.dueDate || report.date || today;
+    const start = base < today ? today : base;
+    const next = A.addDays(start, step);
+    const shiftDate = !report.date || report.date === report.dueDate || report.date < today;
+    report.dueDate = next;
+    if (shiftDate) report.date = next;
+    report.updatedAt = new Date().toISOString();
+    logAction(report, "cycle", `Gia hạn ${step} ngày đến ${shortDate(next)}`);
+    if (R.extendOverlay) {
+      A.closeOverlay(R.extendOverlay);
+      R.extendOverlay = null;
+    }
+    await saveReport(report, `Đã dời hạn đến ${shortDate(next)}${report.reminderTime ? ` · nhắc ${report.reminderTime}` : ""}.`);
+  }
+
+  function openExtendMenu(report) {
+    if (!report) return;
+    if (isDone(report)) {
+      A.toast("Báo cáo đã chốt — không cần gia hạn.", "info");
+      return;
+    }
+    const current = report.dueDate || report.date;
+    const options = [
+      { days: 1, label: "Thêm 1 ngày", hint: "Dời sang ngày mai" },
+      { days: 3, label: "Thêm 3 ngày", hint: "Giữ nhịp trong tuần" },
+      { days: 7, label: "Thêm 1 tuần", hint: "Sang tuần sau" },
+      { days: 30, label: "Thêm 1 tháng", hint: "Dời sang tháng sau" },
+    ];
+    const html = `<div class="modal modal-narrow rp-modal rp-extend-modal" role="dialog" aria-modal="true" aria-labelledby="rpExtendTitle">
+      <div class="modal-head">
+        <div>
+          <div class="modal-eyebrow">${A.icon("clock")} Gia hạn báo cáo</div>
+          <div class="modal-title" id="rpExtendTitle">${esc(report.title || "Báo cáo")}</div>
+          <div class="modal-sub">Hạn hiện tại ${esc(shortDate(current) || "chưa đặt")} · chọn mốc dời nhanh.</div>
+        </div>
+        <button class="icon-btn modal-close" type="button" data-rp-close aria-label="Đóng">${A.icon("x")}</button>
+      </div>
+      <div class="modal-body">
+        <div class="rp-extend-grid">
+          ${options.map((option) => `<button class="rp-extend-opt" type="button" data-rp="extend" data-id="${esc(report.id)}" data-days="${option.days}">
+            <b>${esc(option.label)}</b><span>${esc(option.hint)}</span>
+          </button>`).join("")}
+        </div>
+        <p class="rp-muted-note">Gia hạn chỉ dời hạn nộp, không đánh dấu đã gửi. Báo cáo quá hạn sẽ tính lại từ hôm nay.</p>
+      </div>
+    </div>`;
+    const overlay = A.openOverlay(html, { className: "rp-overlay" });
+    if (!overlay) return;
+    R.extendOverlay = overlay;
+    overlay.querySelectorAll("[data-rp-close]").forEach((btn) => btn.addEventListener("click", () => A.closeOverlay(overlay)));
+  }
+
   /* ---------- Chú Ong: nhắc việc ---------- */
   function notify(title, body) {
     if (R.notify && "Notification" in window && Notification.permission === "granted") {
@@ -750,7 +932,7 @@
       <div class="rp-gate-icon">${A.icon("link")}</div>
       <h2>Bản này chưa có API</h2>
       <p>GitHub Pages chỉ chạy phần tĩnh. Mở bản đầy đủ trên Cloudflare để dùng kho báo cáo.</p>
-      <a class="btn btn-accent" href="https://guong-dieu-phoi.tonyhunggemini.workers.dev/#/reports">Mở bản Cloudflare</a>
+      <a class="btn btn-accent" href="https://guong.tonyhunggemini.workers.dev/#/reports">Mở bản Cloudflare</a>
     </section>`;
   }
 
@@ -852,7 +1034,11 @@
       </button>
       ${statusChip(report.status)}
       ${due ? `<span class="rp-due ${due.cls}">${A.icon("clock")} ${esc(due.text)}</span>` : ""}
-      <button class="rp-priority-act" type="button" data-rp="submit" data-id="${esc(report.id)}">${A.icon("send")} Nộp</button>
+      <div class="rp-priority-acts">
+        <button class="rp-priority-act rp-act-done" type="button" data-rp="complete" data-id="${esc(report.id)}" title="Chốt báo cáo, tự tạo nhắc kỳ tới">${A.icon("check")} Xong</button>
+        <button class="rp-priority-act rp-act-ext" type="button" data-rp="extend" data-id="${esc(report.id)}" data-days="1" title="Dời hạn thêm 1 ngày">${A.icon("clock")} +1</button>
+        <button class="rp-priority-act rp-act-more" type="button" data-rp="extend-menu" data-id="${esc(report.id)}" title="Gia hạn tuỳ chọn" aria-label="Gia hạn tuỳ chọn">${A.icon("chevron-down")}</button>
+      </div>
     </article>`;
   }
 
@@ -997,6 +1183,8 @@
         ${files.length ? `<span class="rp-q-files">${A.icon("paperclip")}${files.length}</span>` : ""}
       </div>
       <div class="rp-q-actions">
+        ${isDone(report) ? "" : `<button class="rp-q-act rp-q-done" type="button" data-rp="complete" data-id="${esc(report.id)}" title="Chốt báo cáo, tự tạo nhắc kỳ tới">${A.icon("check")}<span>Xong</span></button>
+        <button class="rp-q-act rp-q-ext" type="button" data-rp="extend" data-id="${esc(report.id)}" data-days="1" title="Dời hạn thêm 1 ngày">${A.icon("clock")}<span>+1 ngày</span></button>`}
         <button class="rp-q-act rp-q-submit" type="button" data-rp="submit" data-id="${esc(report.id)}" title="Mở tệp, copy nội dung và mở trang nộp">${A.icon("upload")}<span>Sẵn sàng Nộp</span></button>
         <button class="rp-q-act rp-q-zalo" type="button" data-rp="zalo-send" data-id="${esc(report.id)}" title="Copy lời nhắn và mở Zalo của người duyệt">${A.icon("message")}<span>Zalo Duyệt</span></button>
         <button class="rp-q-act rp-q-file" type="button" data-rp="file" data-id="${esc(report.id)}" title="Mở tệp báo cáo">${A.icon("external")}<span>View File</span></button>
@@ -1427,6 +1615,8 @@
           <span>${A.icon("history")} v${Number(report.version) || 1}</span>
         </div>
         <div class="rp-dr-actions">
+          ${isDone(report) ? "" : `<button class="btn btn-ghost btn-sm" type="button" data-rp="complete" data-id="${esc(report.id)}">${A.icon("check")} Hoàn thành</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-rp="extend" data-id="${esc(report.id)}" data-days="1">${A.icon("clock")} +1 ngày</button>`}
           <button class="btn btn-accent btn-sm" type="button" data-rp="submit" data-id="${esc(report.id)}">${A.icon("send")} Nộp báo cáo</button>
           <button class="btn btn-ghost btn-sm" type="button" data-rp="zalo-send" data-id="${esc(report.id)}">${A.icon("message")} Zalo duyệt</button>
           <button class="btn btn-ghost btn-sm" type="button" data-rp="pin" data-id="${esc(report.id)}">${A.icon("flag")} ${report.pinned ? "Bỏ ghim" : "Ghim"}</button>
@@ -2151,6 +2341,12 @@
       if (report) openPrimaryFile(report);
     } else if (action === "submit") {
       if (report) readyToSubmit(report);
+    } else if (action === "complete") {
+      if (report) completeReport(report);
+    } else if (action === "extend") {
+      if (report) extendReport(report, trigger.getAttribute("data-days"));
+    } else if (action === "extend-menu") {
+      if (report) openExtendMenu(report);
     } else if (action === "zalo-send") {
       if (report) sendZalo(report);
     } else if (action === "ai-run") {
@@ -2372,4 +2568,13 @@
     baseRender(options);
     if (A.view === "reports") mount();
   };
+
+  // Nạp sẵn kho báo cáo để thẻ nhắc trên Tổng quan có dữ liệu ngay từ đầu.
+  function startBackground() {
+    if (R.booted) return;
+    R.booted = true;
+    boot();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startBackground, { once: true });
+  else startBackground();
 })();

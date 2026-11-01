@@ -328,6 +328,10 @@
 .rp-q-act .ico { width: 12px; height: 12px; }
 .rp-q-submit { background: var(--accent); color: var(--paper); }
 .rp-q-submit:hover { filter: brightness(1.06); }
+.rp-q-done { background: var(--ok); color: var(--paper); }
+.rp-q-done:hover { filter: brightness(1.06); }
+.rp-q-ext { background: var(--warn-soft, #fdf1d8); color: var(--warn); }
+.rp-q-ext:hover { filter: brightness(0.97); }
 .rp-q-zalo { background: var(--info-soft); color: var(--info); }
 .rp-q-zalo:hover { filter: brightness(0.97); }
 .rp-q-file { background: var(--ok-soft); color: var(--ok); }
@@ -625,6 +629,24 @@
 }
 .rp-priority-act .ico { width: 12px; height: 12px; }
 .rp-priority-act:hover { opacity: 0.88; }
+.rp-priority-acts { display: flex; align-items: center; gap: 4px; flex: none; }
+.rp-priority-act.rp-act-done { background: var(--ok); }
+.rp-priority-act.rp-act-ext { background: var(--warn-soft, #fdf1d8); color: var(--warn); }
+.rp-priority-act.rp-act-more { width: 28px; padding: 0; justify-content: center; background: var(--paper); color: var(--muted); border: 1px solid var(--line); }
+.rp-priority-act.rp-act-more:hover { color: var(--ink); opacity: 1; }
+
+/* ---------- gia hạn ---------- */
+.rp-extend-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.rp-extend-opt {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md, 12px);
+  background: var(--paper); color: var(--ink); text-align: left;
+  font-family: inherit; cursor: pointer; transition: border-color 0.16s, background 0.16s;
+}
+.rp-extend-opt b { font-size: 13px; font-weight: 750; }
+.rp-extend-opt span { font-size: 10.5px; color: var(--muted); }
+.rp-extend-opt:hover { border-color: var(--accent); background: var(--accent-soft); }
+.rp-extend-opt:active { transform: translateY(1px); }
 
 /* ---------- bộ lọc đang bật ---------- */
 .rp-focus-chip {

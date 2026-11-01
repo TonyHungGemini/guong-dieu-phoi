@@ -188,6 +188,10 @@
     const color = String(value || "");
     return /^#[0-9a-fA-F]{6}$/.test(color) ? color.toUpperCase() : memberColors[index % memberColors.length];
   }
+  function cleanEmail(value) {
+    const email = cleanText(value, 120).toLowerCase();
+    return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) ? email : "";
+  }
   function normalizeMember(raw, usedIds, index) {
     if (!raw || typeof raw !== "object") return null;
     const name = cleanText(raw.name, 60);
@@ -203,6 +207,9 @@
       role: cleanText(raw.role, 60) || "Thành viên",
       color: colorFor(raw.color, index),
       capacity: Number.isFinite(capacity) ? clamp(Math.round(capacity), 1, 40) : 8,
+      email: cleanEmail(raw.email),
+      invitedAt: cleanStamp(raw.invitedAt),
+      inviteStatus: raw.inviteStatus === "joined" ? "joined" : cleanEmail(raw.email) ? "invited" : "",
     };
   }
 
@@ -274,6 +281,52 @@
     return { id, title, note: cleanText(raw.note, 240), date };
   }
 
+  function normalizeProjects(raw, projectName) {
+    const usedIds = new Set();
+    const list = Array.isArray(raw.projects)
+      ? raw.projects.slice(0, 50).map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const name = cleanText(item.name, 80);
+          if (!name) return null;
+          let id = safeId(item.id, "p");
+          while (usedIds.has(id)) id = uid("p");
+          usedIds.add(id);
+          const code = String(item.joinCode || "").trim().toUpperCase();
+          return {
+            id,
+            name,
+            joinCode: /^[A-Z0-9-]{4,20}$/.test(code) ? code : S.makeJoinCode(),
+            createdAt: cleanStamp(item.createdAt) || new Date().toISOString(),
+          };
+        }).filter(Boolean)
+      : [];
+    if (!list.length) {
+      list.push({ id: "p-main", name: projectName || "Dự án App", joinCode: S.makeJoinCode(), createdAt: new Date().toISOString() });
+    }
+    return list;
+  }
+  const LICENSE_PLANS = { week: "1 tuần", month: "1 tháng", year: "1 năm" };
+  function normalizeLicenses(raw) {
+    const seen = new Set();
+    return Array.isArray(raw.licenses)
+      ? raw.licenses.slice(0, 300).map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const email = cleanEmail(item.email);
+          const expiresAt = cleanStamp(item.expiresAt);
+          if (!email || !expiresAt || seen.has(email)) return null;
+          seen.add(email);
+          const plan = LICENSE_PLANS[item.plan] ? item.plan : "month";
+          return {
+            email,
+            name: cleanText(item.name, 60),
+            plan,
+            startedAt: cleanStamp(item.startedAt) || new Date().toISOString(),
+            expiresAt,
+          };
+        }).filter(Boolean)
+      : [];
+  }
+
   function normalizeState(raw) {
     if (!raw || typeof raw !== "object" || !Array.isArray(raw.tasks)) return null;
     const usedMembers = new Set();
@@ -320,14 +373,22 @@
     const milestones = Array.isArray(raw.milestones)
       ? raw.milestones.slice(0, 100).map((item) => normalizeMilestone(item, usedMilestones)).filter(Boolean)
       : [];
+    const projectName = cleanText(settings.projectName, 80) || "Dự án App";
+    const projects = normalizeProjects(settings, projectName);
+    const projectIds = new Set(projects.map((p) => p.id));
+    const activeProjectId = projectIds.has(cleanId(settings.activeProjectId)) ? settings.activeProjectId : projects[0].id;
+    const licenses = normalizeLicenses(settings);
     return {
       version: 2,
       settings: {
         theme: settings.theme === "dark" ? "dark" : "light",
-        projectName: cleanText(settings.projectName, 80) || "Dự án App",
+        projectName: projectName,
         startDate: parseISO(settings.startDate) ? settings.startDate : todayISO(),
         createdAt: cleanStamp(settings.createdAt) || new Date().toISOString(),
         ownerId: memberIds.has(settings.ownerId) ? settings.ownerId : (members[0] ? members[0].id : null),
+        projects,
+        activeProjectId,
+        licenses,
       },
       members,
       tasks,
@@ -442,6 +503,87 @@
   };
   App.workstreams = function () {
     return S.workstreams;
+  };
+  App.projects = function () {
+    return App.DATA.settings.projects || [];
+  };
+  App.projectById = function (id) {
+    return App.projects().find((p) => p.id === id) || null;
+  };
+  App.activeProject = function () {
+    return App.projectById(App.DATA.settings.activeProjectId) || App.projects()[0] || null;
+  };
+  App.addProject = function (name) {
+    const label = cleanText(name, 80);
+    if (!label) return null;
+    const project = { id: uid("p"), name: label, joinCode: S.makeJoinCode(), createdAt: new Date().toISOString() };
+    App.projects().push(project);
+    App.DATA.settings.activeProjectId = project.id;
+    App.DATA.settings.projectName = label;
+    persist(App.DATA);
+    App.updateShell();
+    return project;
+  };
+  App.setProject = function (id) {
+    const project = App.projectById(id);
+    if (!project) return null;
+    App.DATA.settings.activeProjectId = project.id;
+    App.DATA.settings.projectName = project.name;
+    persist(App.DATA);
+    App.updateShell();
+    return project;
+  };
+  App.renameActiveProject = function (name) {
+    const project = App.activeProject();
+    const label = cleanText(name, 80);
+    if (!project || !label) return null;
+    project.name = label;
+    App.DATA.settings.projectName = label;
+    persist(App.DATA);
+    App.updateShell();
+    return project;
+  };
+  App.refreshProjectCode = function (id) {
+    const project = App.projectById(id);
+    if (!project) return null;
+    project.joinCode = S.makeJoinCode();
+    persist(App.DATA);
+    return project;
+  };
+  App.licenses = function () {
+    return App.DATA.settings.licenses || [];
+  };
+  App.licenseDaysLeft = function (license) {
+    if (!license || !license.expiresAt) return 0;
+    const end = new Date(license.expiresAt);
+    return Math.ceil((end.getTime() - Date.now()) / 86400000);
+  };
+  App.grantLicense = function (emailRaw, days, name) {
+    const email = cleanEmail(emailRaw);
+    const step = clamp(Math.round(Number(days) || 30), 1, 730);
+    if (!email) return { error: "Email chưa hợp lệ." };
+    const list = App.DATA.settings.licenses;
+    const now = new Date();
+    const existing = list.find((item) => item.email === email);
+    const start = existing && new Date(existing.expiresAt) > now ? new Date(existing.expiresAt) : now;
+    const expiresAt = new Date(start.getTime() + step * 86400000).toISOString();
+    const plan = step >= 300 ? "year" : step >= 25 ? "month" : "week";
+    if (existing) {
+      existing.expiresAt = expiresAt;
+      existing.plan = plan;
+      if (name) existing.name = cleanText(name, 60);
+    } else {
+      list.push({ email, name: cleanText(name, 60), plan, startedAt: now.toISOString(), expiresAt });
+    }
+    persist(App.DATA);
+    return { license: existing || list[list.length - 1], extended: Boolean(existing) };
+  };
+  App.revokeLicense = function (emailRaw) {
+    const email = cleanEmail(emailRaw);
+    const before = App.DATA.settings.licenses.length;
+    App.DATA.settings.licenses = App.DATA.settings.licenses.filter((item) => item.email !== email);
+    persist(App.DATA);
+    return App.DATA.settings.licenses.length !== before;
   };
   App.labels = function () {
     return S.labels;
@@ -922,6 +1064,7 @@
           </div>
           <p class="account-note">Bàn việc trên trình duyệt này và kho báo cáo được tách theo email <b>${esc(user.email)}</b>. Người dùng tài khoản khác không thấy dữ liệu của bạn.</p>
           <div class="account-actions">
+            <button class="btn btn-ghost" type="button" data-acc-users>${icon("users")} Người dùng &amp; thời hạn</button>
             <button class="btn btn-ghost" type="button" data-acc-settings>${icon("settings")} Cài đặt &amp; dữ liệu</button>
             <button class="btn btn-ghost" type="button" data-acc-signout>${icon("external")} Đăng xuất</button>
           </div>
@@ -967,6 +1110,13 @@
       settings.addEventListener("click", () => {
         App.closeOverlay(overlay);
         App.openSettings();
+      });
+    }
+    const users = overlay.querySelector("[data-acc-users]");
+    if (users) {
+      users.addEventListener("click", () => {
+        App.closeOverlay(overlay);
+        if (App.openUserManager) App.openUserManager();
       });
     }
   };
