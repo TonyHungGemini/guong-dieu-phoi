@@ -24,6 +24,7 @@
     Done: "done",
     Sent: "sent",
   };
+  const FREQ_LABEL = { daily: "Hàng ngày", weekly: "Hàng tuần", monthly: "Hàng tháng", yearly: "Hàng năm" };
 
   const weeklyRenderer = A.renderReports;
   const esc = A.esc;
@@ -61,6 +62,64 @@
   }
   function statusChip(status) {
     return `<span class="rp-st rp-st-${STATUS_CLASS[status] || "todo"}">${esc(STATUS_LABEL[status] || status || "Chờ làm")}</span>`;
+  }
+  function shortDate(iso) {
+    const parts = String(iso || "").split("-");
+    return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : String(iso || "");
+  }
+  function fileDate(iso) {
+    const parts = String(iso || "").split("-");
+    return parts.length === 3 ? `${parts[2]}-${parts[1]}-${parts[0]}` : "";
+  }
+  function removeDiacritics(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/đ/g, "d")
+      .replace(/Đ/g, "D")
+      .replace(/[^a-zA-Z0-9_-]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_+|_+$/g, "");
+  }
+  function driveUrl(report) {
+    const link = A.safeUrl ? A.safeUrl(report.webViewLink) : report.webViewLink;
+    if (link) return link;
+    if (report.driveFileId) return `https://drive.google.com/file/d/${encodeURIComponent(report.driveFileId)}/view`;
+    return "";
+  }
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+  function downloadReportCsv(report) {
+    const rows = [
+      ["Tiêu đề", report.title || ""],
+      ["Dự án", report.project || ""],
+      ["Danh mục", report.category || ""],
+      ["Ngày", shortDate(report.date)],
+      ["Trạng thái", STATUS_LABEL[report.status] || report.status || ""],
+      ["Phiên bản", `v${Number(report.version) || 1}`],
+      ["Nội dung", report.notes || ""],
+      ["Tóm tắt AI", report.aiSummary || ""],
+      ["Việc tiếp theo", (report.aiActionItems || []).join("; ")],
+    ];
+    const csv = "\uFEFF" + rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const name = `${fileDate(report.date)}_${removeDiacritics(report.title) || "BaoCao"}.csv`;
+    downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), name);
+    return name;
+  }
+  function zaloPhone(value) {
+    let clean = String(value || "").replace(/\D/g, "");
+    if (!clean) return "84912345678";
+    if (clean.startsWith("0")) clean = `84${clean.slice(1)}`;
+    else if (!clean.startsWith("84")) clean = `84${clean}`;
+    return clean;
   }
   function refresh() {
     if (A.view === "reports") A.render({ animate: false });
@@ -346,6 +405,42 @@
     return `<div class="rp-loading"><span class="rp-spinner"></span> Đang tải kho báo cáo…</div>`;
   }
 
+  function renderQuickCard(report) {
+    const freq = FREQ_LABEL[report.frequency] || "";
+    return `<article class="rp-q-card">
+      <div class="rp-q-top">
+        <div class="rp-q-chips">
+          <span class="rp-cat">${esc(report.category || "Báo cáo")}</span>
+          ${freq ? `<span class="rp-q-freq">${esc(freq)}</span>` : ""}
+        </div>
+        <button class="rp-q-star" type="button" data-rp="pin" data-id="${esc(report.id)}" title="Bỏ ghim" aria-label="Bỏ ghim">${A.icon("flag")}</button>
+      </div>
+      <h3 class="rp-q-title">${esc(report.title || "Báo cáo chưa đặt tên")}</h3>
+      <div class="rp-q-proj">${A.icon("layers")}<span>${esc(report.project || "Chưa gán dự án")}</span></div>
+      <div class="rp-q-meta">
+        <span>${A.icon("calendar")}${esc(shortDate(report.date) || "—")}</span>
+        ${report.reminderTime ? `<span class="rp-q-time">${A.icon("clock")}${esc(report.reminderTime)}</span>` : ""}
+      </div>
+      <div class="rp-q-actions">
+        <button class="rp-q-act rp-q-submit" type="button" data-rp="submit" data-id="${esc(report.id)}" title="Mở tệp, copy nội dung và mở trang nộp">${A.icon("upload")}<span>Sẵn sàng Nộp</span></button>
+        <button class="rp-q-act rp-q-zalo" type="button" data-rp="zalo-send" data-id="${esc(report.id)}" title="Copy lời nhắn và mở Zalo của người duyệt">${A.icon("message")}<span>Zalo Duyệt</span></button>
+        <button class="rp-q-act rp-q-file" type="button" data-rp="file" data-id="${esc(report.id)}" title="Mở tệp báo cáo">${A.icon("external")}<span>View File</span></button>
+      </div>
+    </article>`;
+  }
+
+  function renderQuickAccess() {
+    const pinned = R.reports.filter((item) => item.pinned);
+    if (!pinned.length) return "";
+    return `<section class="rp-quick">
+      <div class="rp-quick-head">
+        <h2>${A.icon("flag")} Truy cập nhanh <em>(báo cáo ghim)</em></h2>
+        <span class="rp-quick-count">${pinned.length} báo cáo ưu tiên</span>
+      </div>
+      <div class="rp-quick-grid">${pinned.map(renderQuickCard).join("")}</div>
+    </section>`;
+  }
+
   function renderToolbar() {
     const counts = { total: R.reports.length, done: 0, review: 0, doing: 0 };
     R.reports.forEach((r) => {
@@ -400,6 +495,7 @@
       <div class="rp-card-foot">
         <span class="rp-ver">v${Number(report.version) || 1}</span>
         <div class="rp-card-actions">
+          <button class="btn btn-ghost btn-sm" type="button" data-rp="pin" data-id="${esc(report.id)}">${A.icon("flag")} ${report.pinned ? "Bỏ ghim" : "Ghim"}</button>
           <button class="btn btn-ghost btn-sm" type="button" data-rp="edit" data-id="${esc(report.id)}">${A.icon("pencil")} Sửa</button>
           <button class="btn btn-ghost btn-sm" type="button" data-rp="ai" data-id="${esc(report.id)}">${A.icon("spark")} AI</button>
           <button class="btn btn-ghost btn-sm rp-danger" type="button" data-rp="delete" data-id="${esc(report.id)}">${A.icon("trash")} Xoá</button>
@@ -428,6 +524,7 @@
         </div>`;
     return `<div class="rp-accountbar">${renderAccount()}</div>
       ${renderToolbar()}
+      ${renderQuickAccess()}
       <div class="rp-list" data-rp-list>${cards}</div>`;
   }
 
@@ -568,6 +665,67 @@
         }
       }
     );
+  }
+
+  async function togglePin(id) {
+    const report = R.reports.find((item) => item.id === id);
+    if (!report) return;
+    report.pinned = !report.pinned;
+    report.updatedAt = new Date().toISOString();
+    R.reports = sortReports(R.reports);
+    refresh();
+    try {
+      await push();
+      A.toast(report.pinned ? "Đã ghim báo cáo." : "Đã bỏ ghim báo cáo.", "success");
+    } catch (err) {
+      A.toast(err.message || "Chưa lưu được trạng thái ghim.", "error");
+      await loadData().catch(() => {});
+      refresh();
+    }
+  }
+
+  function openReportFile(report) {
+    const drive = driveUrl(report);
+    if (drive) {
+      window.open(drive, "_blank", "noopener,noreferrer");
+      A.toast(`Đang mở “${report.fileName || report.title}”.`, "info");
+      return;
+    }
+    const name = downloadReportCsv(report);
+    A.toast(`Chưa có tệp gốc trên Drive — đã tải bản CSV ${name}.`, "info");
+  }
+
+  async function readyToSubmit(report) {
+    const drive = driveUrl(report);
+    if (drive) window.open(drive, "_blank", "noopener,noreferrer");
+    else downloadReportCsv(report);
+    const content = report.notes || report.aiSummary || report.title || "";
+    if (content && navigator.clipboard) navigator.clipboard.writeText(content).catch(() => {});
+    const target = String(report.submissionUrl || "").trim();
+    if (target) window.open(/^https?:\/\//i.test(target) ? target : `https://${target}`, "_blank", "noopener,noreferrer");
+    const now = new Date().toISOString();
+    report.status = "Sent";
+    report.lastSentAt = now;
+    report.updatedAt = now;
+    R.reports = sortReports(R.reports);
+    refresh();
+    try {
+      await push();
+    } catch (err) {
+      A.toast(err.message || "Chưa đồng bộ được trạng thái Đã gửi.", "error");
+    }
+    A.toast("Đã mở tệp, copy nội dung và đánh dấu Đã gửi.", "success");
+  }
+
+  function sendZalo(report) {
+    const drive = driveUrl(report);
+    if (drive) window.open(drive, "_blank", "noopener,noreferrer");
+    else downloadReportCsv(report);
+    const message = `Dạ anh/chị duyệt giúp em báo cáo ${report.title} nhé!${report.notes ? `\n\nNội dung tóm tắt:\n${report.notes}` : ""}`;
+    if (navigator.clipboard) navigator.clipboard.writeText(message).catch(() => {});
+    const phone = zaloPhone(report.zaloPhone);
+    window.open(`https://zalo.me/${phone}`, "_blank", "noopener,noreferrer");
+    A.toast(`Đã copy lời nhắn và mở Zalo 0${phone.slice(2)}.`, "success");
   }
 
   /* ---------- AI ---------- */
@@ -829,6 +987,17 @@
     else if (action === "create") openForm();
     else if (action === "edit") openForm(id);
     else if (action === "delete") removeReport(id);
+    else if (action === "pin") togglePin(id);
+    else if (action === "file") {
+      const report = R.reports.find((item) => item.id === id);
+      if (report) openReportFile(report);
+    } else if (action === "submit") {
+      const report = R.reports.find((item) => item.id === id);
+      if (report) readyToSubmit(report);
+    } else if (action === "zalo-send") {
+      const report = R.reports.find((item) => item.id === id);
+      if (report) sendZalo(report);
+    }
     else if (action === "ai") openAi(id);
     else if (action === "zalo") openZalo();
     else if (action === "drive") importFromDrive();
