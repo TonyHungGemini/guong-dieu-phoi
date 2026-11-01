@@ -21,7 +21,7 @@
   "vars": {
     "GEMINI_MODEL": "gemini-3.6-flash",
     "GEMINI_THINKING_LEVEL": "LOW",
-    "GOOGLE_CLIENT_ID": "80167301652-dpfgs2regia45ul3nij8klfrchbpe4gj.apps.googleusercontent.com"
+    "GOOGLE_CLIENT_ID": "777663854457-0ghqdqjn3hoahavpthcafafn741etg8v.apps.googleusercontent.com"
   },
   "observability": {
     "enabled": true

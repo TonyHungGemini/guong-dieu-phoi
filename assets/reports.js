@@ -7,7 +7,7 @@
   const A = window.App;
   if (!A) return;
 
-  const GOOGLE_CLIENT_ID = "80167301652-dpfgs2regia45ul3nij8klfrchbpe4gj.apps.googleusercontent.com";
+  const GOOGLE_CLIENT_ID = "777663854457-0ghqdqjn3hoahavpthcafafn741etg8v.apps.googleusercontent.com";
   const CATEGORIES = ["Báo cáo ngày", "Báo cáo tuần", "Báo cáo tháng", "Tài liệu khác"];
   const STATUSES = ["To-do", "In Progress", "Pending Review", "Done", "Sent"];
   const STATUS_LABEL = {
