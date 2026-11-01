@@ -3,6 +3,8 @@ interface Env {
   SYNC_KV: KVNamespace;
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
+  GEMINI_THINKING_LEVEL?: string;
+  GEMINI_RELAY?: DurableObjectNamespace;
   ACCESS_CODE?: string;
   SESSION_SECRET?: string;
   GOOGLE_CLIENT_ID?: string;
@@ -248,23 +250,74 @@ async function resolveStoreKey(request: Request, env: Env, fallbackEmail?: strin
 
 type GeminiSchema = Record<string, unknown>;
 
-async function geminiJson(env: Env, prompt: string, schema: GeminiSchema) {
-  const model = env.GEMINI_MODEL || "gemini-2.5-flash";
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY || "" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: "application/json", responseSchema: schema },
-      }),
+// Gemini blocks requests whose egress IP geolocates outside its supported regions.
+// Cloudflare Workers normally egress from the requesting client's colo (here: KH),
+// so generation calls are relayed through a Durable Object pinned to a supported region.
+export class GeminiRelay {
+  constructor(private state: DurableObjectState) {}
+
+  async fetch(request: Request): Promise<Response> {
+    const path = new URL(request.url).pathname;
+    if (path === "/trace") {
+      const trace = await fetch("https://www.cloudflare.com/cdn-cgi/trace").then((r) => r.text()).catch(() => "");
+      return new Response(trace, { headers: { "content-type": "text/plain" } });
     }
-  );
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`);
-  const data: any = await res.json();
-  const text = (data?.candidates?.[0]?.content?.parts || []).map((p: any) => p.text || "").join("");
-  return JSON.parse(text || "{}");
+    const target = request.headers.get("x-gemini-url");
+    if (!target) return new Response("missing x-gemini-url", { status: 400 });
+    if (new URL(target).hostname !== "generativelanguage.googleapis.com") {
+      return new Response("target not allowed", { status: 400 });
+    }
+    const res = await fetch(target, {
+      method: request.method,
+      headers: {
+        "content-type": "application/json",
+        "x-goog-api-key": request.headers.get("x-goog-api-key") || "",
+      },
+      body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.text(),
+    });
+    return new Response(res.body, { status: res.status, headers: { "content-type": "application/json" } });
+  }
+}
+
+function geminiStub(env: Env) {
+  if (!env.GEMINI_RELAY) return null;
+  return env.GEMINI_RELAY.get(env.GEMINI_RELAY.idFromName("gemini"), { locationHint: "wnam" });
+}
+
+async function geminiJson(env: Env, prompt: string, schema: GeminiSchema) {
+  const model = env.GEMINI_MODEL || "gemini-3.6-flash";
+  const target = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  const body = JSON.stringify({
+    contents: [{ parts: [{ text: prompt }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: schema,
+      thinkingConfig: { thinkingLevel: env.GEMINI_THINKING_LEVEL || "LOW" },
+    },
+  });
+  const stub = geminiStub(env);
+  let lastError = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = stub
+      ? await stub.fetch("https://gemini-relay.internal/generate", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-gemini-url": target, "x-goog-api-key": env.GEMINI_API_KEY || "" },
+          body,
+        })
+      : await fetch(target, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY || "" },
+          body,
+        });
+    if (res.ok) {
+      const data: any = await res.json();
+      const text = (data?.candidates?.[0]?.content?.parts || []).map((p: any) => p.text || "").join("");
+      return JSON.parse(text || "{}");
+    }
+    lastError = `Gemini ${res.status}: ${(await res.text()).slice(0, 300)}`;
+    if (res.status !== 503) break;
+  }
+  throw new Error(lastError);
 }
 
 const SUMMARIZE_SCHEMA: GeminiSchema = {

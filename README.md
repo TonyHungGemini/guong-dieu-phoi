@@ -187,6 +187,7 @@ npm run deploy                             # build:site + wrangler deploy
 - `npm run build:site` tạo `dist-site/`: bộ khung GUỒNG + `dist-report/` lồng tại `/report/`.
 - `npm run preview:cf` chạy thử Worker ở máy (`wrangler dev`). Chạy đúng cổng mà OAuth origin đã đăng ký: `npx wrangler dev --port 3100 --var ACCESS_CODE:<mã>`.
 - `GOOGLE_CLIENT_ID` nằm trong `wrangler.jsonc` (`vars`), không phải secret.
+- AI: `GEMINI_MODEL` (mặc định `gemini-3.6-flash`) và `GEMINI_THINKING_LEVEL` (`LOW`) cũng nằm trong `vars`. Gemini chặn IP phát ra từ Campuchia (Cloudflare trả `loc=KH`), nên các lệnh gọi AI đi qua Durable Object `GeminiRelay` ghim vùng `wnam` rồi mới ra Internet. `npm run preview:cf` chạy DO cục bộ nên AI có thể bị chặn ở máy.
 - Không có `ACCESS_CODE` thì API mở công khai; đặt mã để chặn truy cập dữ liệu báo cáo.
 - `ACCESS_CODE` chỉ có hiệu lực phía server; trang `/` vẫn tải được nhưng API trả 401 cho tới khi nhập mã.
 - Seed dữ liệu cũ vào KV (một lần), theo đúng email Google sau khi đăng nhập:

@@ -14,8 +14,13 @@
       "id": "03bb6377433f4fe998c84cb9d5d4fcc2"
     }
   ],
+  "durable_objects": {
+    "bindings": [{ "name": "GEMINI_RELAY", "class_name": "GeminiRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GeminiRelay"] }],
   "vars": {
-    "GEMINI_MODEL": "gemini-2.5-flash",
+    "GEMINI_MODEL": "gemini-3.6-flash",
+    "GEMINI_THINKING_LEVEL": "LOW",
     "GOOGLE_CLIENT_ID": "80167301652-dpfgs2regia45ul3nij8klfrchbpe4gj.apps.googleusercontent.com"
   },
   "observability": {
