@@ -51,6 +51,7 @@
         projects: [{ id: "p-main", name: "Dự án App", joinCode: makeJoinCode(), createdAt }],
         activeProjectId: "p-main",
         licenses: [],
+        joined: [],
       },
       members: [],
       tasks: [],

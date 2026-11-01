@@ -254,6 +254,7 @@
       id,
       title,
       desc: cleanText(raw.desc, 4000),
+      projectId: cleanId(raw.projectId) || null,
       status,
       priority,
       assignee: memberIds.has(raw.assignee) ? raw.assignee : null,
@@ -377,7 +378,25 @@
     const projects = normalizeProjects(settings, projectName);
     const projectIds = new Set(projects.map((p) => p.id));
     const activeProjectId = projectIds.has(cleanId(settings.activeProjectId)) ? settings.activeProjectId : projects[0].id;
+    tasks.forEach((task) => {
+      if (!task.projectId || !projectIds.has(task.projectId)) task.projectId = activeProjectId;
+    });
     const licenses = normalizeLicenses(settings);
+    const joined = Array.isArray(settings.joined)
+      ? settings.joined.slice(0, 100).map((item) => {
+          if (!item || typeof item !== "object") return null;
+          const owner = cleanEmail(item.owner);
+          const projectId = cleanId(item.projectId);
+          if (!owner || !projectId) return null;
+          return {
+            owner,
+            ownerName: cleanText(item.ownerName, 80) || owner,
+            projectId,
+            projectName: cleanText(item.projectName, 80) || "Dự án được mời",
+            joinedAt: cleanStamp(item.joinedAt) || new Date().toISOString(),
+          };
+        }).filter(Boolean)
+      : [];
     return {
       version: 2,
       settings: {
@@ -389,6 +408,7 @@
         projects,
         activeProjectId,
         licenses,
+        joined,
       },
       members,
       tasks,
@@ -490,9 +510,66 @@
   App.dateISO = dateISO;
   App.MONTHS = MONTHS;
 
+  let boardTimer = null;
+  let registeredSig = "";
+  function boardSnapshot() {
+    return {
+      projects: App.projects().map((p) => ({ id: p.id, name: p.name, joinCode: p.joinCode })),
+      members: App.members().map((m) => ({ id: m.id, name: m.name, role: m.role })),
+      tasks: App.DATA.tasks.map((t) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        assignee: t.assignee,
+        workstream: t.workstream,
+        due: t.due,
+        completedAt: t.completedAt,
+        projectId: t.projectId,
+        labels: t.labels,
+      })),
+    };
+  }
+  // Mã phải tra được ngay cả khi dự án chưa có việc nào.
+  function registerProjects(snapshot) {
+    if (!snapshot.projects.length) return;
+    const sig = snapshot.projects.map((p) => `${p.id}:${p.name}:${p.joinCode}`).join("|");
+    if (sig === registeredSig) return;
+    registeredSig = sig;
+    fetch("/api/projects/register", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projects: snapshot.projects }),
+    }).catch(() => {
+      registeredSig = "";
+    });
+  }
+  function syncBoard() {
+    if (boardTimer) clearTimeout(boardTimer);
+    boardTimer = setTimeout(() => {
+      boardTimer = null;
+      if (!App.account || !App.account.email) return;
+      if (location.hostname.endsWith("github.io")) return;
+      const board = boardSnapshot();
+      registerProjects(board);
+      if (!board.tasks.length && !board.members.length) return;
+      fetch("/api/board", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(board),
+      }).catch(() => {
+        /* bản tĩnh hoặc offline — bảng việc vẫn nằm trên máy */
+      });
+    }, 1200);
+  }
+
   App.save = function () {
     persist(App.DATA);
+    syncBoard();
   };
+  App.syncBoard = syncBoard;
 
   /* ---------- tra cứu ---------- */
   App.members = function () {
@@ -513,6 +590,40 @@
   App.activeProject = function () {
     return App.projectById(App.DATA.settings.activeProjectId) || App.projects()[0] || null;
   };
+  App.projectTasks = function (list) {
+    const active = App.activeProject();
+    const source = Array.isArray(list) ? list : App.DATA.tasks;
+    return active ? source.filter((t) => t.projectId === active.id) : source;
+  };
+  App.joinedProjects = function () {
+    return App.DATA.settings.joined || [];
+  };
+  App.addJoinedProject = function (entry) {
+    if (!entry || !entry.owner || !entry.projectId) return null;
+    const owner = String(entry.owner).toLowerCase();
+    const list = App.DATA.settings.joined;
+    const existing = list.find((x) => x.owner === owner && x.projectId === entry.projectId);
+    if (existing) {
+      existing.ownerName = entry.ownerName || existing.ownerName;
+      existing.projectName = entry.projectName || existing.projectName;
+      App.save();
+      return existing;
+    }
+    const item = {
+      owner,
+      ownerName: entry.ownerName || entry.owner,
+      projectId: entry.projectId,
+      projectName: entry.projectName || "Dự án được mời",
+      joinedAt: entry.joinedAt || new Date().toISOString(),
+    };
+    list.push(item);
+    App.save();
+    return item;
+  };
+  App.removeJoinedProject = function (owner, projectId) {
+    App.DATA.settings.joined = App.joinedProjects().filter((x) => !(x.owner === owner && x.projectId === projectId));
+    App.save();
+  };
   App.addProject = function (name) {
     const label = cleanText(name, 80);
     if (!label) return null;
@@ -522,6 +633,7 @@
     App.DATA.settings.projectName = label;
     persist(App.DATA);
     App.updateShell();
+    syncBoard();
     return project;
   };
   App.setProject = function (id) {
@@ -651,7 +763,7 @@
     });
   };
   App.openTasks = function (tasks) {
-    return (tasks || App.DATA.tasks).filter((t) => t.status !== "done");
+    return (tasks || App.projectTasks()).filter((t) => t.status !== "done");
   };
   App.smartTasks = function (limit) {
     const sorted = App.sortTasks(App.openTasks(), "smart");
@@ -685,7 +797,7 @@
 
   /* ---------- chỉ số ---------- */
   App.metrics = function () {
-    const tasks = App.DATA.tasks;
+    const tasks = App.projectTasks();
     const total = tasks.length;
     const done = tasks.filter((t) => t.status === "done").length;
     const open = total - done;
@@ -749,7 +861,7 @@
     for (let i = count - 1; i >= 0; i -= 1) {
       const start = addDays(currentStart, -7 * i);
       const end = addDays(start, 6);
-      const value = App.DATA.tasks.filter((t) => t.status === "done" && t.completedAt && t.completedAt >= start && t.completedAt <= end).length;
+      const value = App.projectTasks().filter((t) => t.status === "done" && t.completedAt && t.completedAt >= start && t.completedAt <= end).length;
       out.push({ start, end, label: fmtShort(start), value, now: i === 0, week: weekNumber(start) });
     }
     return out;
@@ -757,7 +869,7 @@
   App.memberStats = function (memberId) {
     const member = App.memberById(memberId);
     if (!member) return null;
-    const tasks = App.DATA.tasks.filter((t) => t.assignee === memberId);
+    const tasks = App.projectTasks().filter((t) => t.assignee === memberId);
     const active = tasks.filter((t) => t.status !== "done");
     const doing = tasks.filter((t) => t.status === "doing").length;
     const review = tasks.filter((t) => t.status === "review").length;
@@ -785,7 +897,7 @@
   App.wsStats = function (wsId) {
     const ws = App.wsById(wsId);
     if (!ws) return null;
-    const tasks = App.DATA.tasks.filter((t) => t.workstream === wsId);
+    const tasks = App.projectTasks().filter((t) => t.workstream === wsId);
     const done = tasks.filter((t) => t.status === "done").length;
     return {
       ws,
@@ -945,6 +1057,7 @@
       writeAccountProfile(next);
       App.updateShell();
       emitAccount();
+      syncBoard();
       return;
     }
     const previousEmail = App.account ? App.account.email : null;
@@ -965,6 +1078,7 @@
     App.updateShell();
     App.render({ animate: false });
     emitAccount();
+    syncBoard();
   };
 
   App.clearAccount = function () {

@@ -266,6 +266,130 @@ function fileDisposition(name: string, inline: boolean) {
   return `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 }
 
+/* ---------- cộng tác: bảng việc chia sẻ theo dự án ---------- */
+type SharedBoard = {
+  projects: { id: string; name: string; joinCode: string }[];
+  members: { id: string; name: string; role?: string }[];
+  tasks: {
+    id: string;
+    title: string;
+    status: string;
+    priority: string;
+    assignee: string | null;
+    workstream: string;
+    due: string | null;
+    completedAt: string | null;
+    projectId: string;
+    labels: string[];
+  }[];
+  updatedAt: string;
+};
+
+type CodeRecord = {
+  owner: string;
+  ownerName: string;
+  projectId: string;
+  name: string;
+  updatedAt: string;
+};
+
+type MemberRecord = {
+  email: string;
+  name: string;
+  picture?: string;
+  owner: string;
+  projects: { id: string; name: string }[];
+  joinedAt: string;
+  lastSeen: string;
+};
+
+const clip = (value: unknown, max = 120) => String(value ?? "").slice(0, max);
+const asArray = (value: unknown): any[] => (Array.isArray(value) ? value : []);
+const cleanEmail = (value: unknown) => clip(value, 160).trim().toLowerCase();
+const cleanCode = (value: unknown) => clip(value, 20).trim().toUpperCase().replace(/[^A-Z0-9-]/g, "");
+const boardKey = (email: string) => `board:${email}`;
+const codeKey = (code: string) => `code:${code}`;
+const codesKey = (owner: string) => `codes:${owner}`;
+const memberKey = (owner: string, email: string) => `member:${owner}:${email}`;
+const memberPrefix = (owner: string) => `member:${owner}:`;
+const joinKey = (email: string, owner: string, projectId: string) => `join:${email}:${owner}:${projectId}`;
+const joinPrefix = (email: string) => `join:${email}:`;
+const licKey = (owner: string, email: string) => `lic:${owner}:${email}`;
+
+async function readJson<T>(env: Env, key: string): Promise<T | null> {
+  const raw = await env.SYNC_KV.get(key);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeBoard(body: any): SharedBoard {
+  const projects = asArray(body?.projects).slice(0, 50).map((p: any) => ({
+    id: clip(p?.id, 40),
+    name: clip(p?.name, 80) || "Dự án",
+    joinCode: cleanCode(p?.joinCode),
+  })).filter((p) => p.id);
+  const members = asArray(body?.members).slice(0, 200).map((m: any) => ({
+    id: clip(m?.id, 40),
+    name: clip(m?.name, 80),
+    role: clip(m?.role, 60),
+  })).filter((m) => m.id && m.name);
+  const projectIds = new Set(projects.map((p) => p.id));
+  const memberIds = new Set(members.map((m) => m.id));
+  const tasks = asArray(body?.tasks).slice(0, 3000).map((t: any) => ({
+    id: clip(t?.id, 40),
+    title: clip(t?.title, 200),
+    status: clip(t?.status, 20) || "todo",
+    priority: clip(t?.priority, 10) || "med",
+    assignee: memberIds.has(t?.assignee) ? clip(t?.assignee, 40) : null,
+    workstream: clip(t?.workstream, 20),
+    due: /^\d{4}-\d{2}-\d{2}$/.test(String(t?.due || "")) ? String(t.due) : null,
+    completedAt: /^\d{4}-\d{2}-\d{2}$/.test(String(t?.completedAt || "")) ? String(t.completedAt) : null,
+    projectId: projectIds.has(t?.projectId) ? clip(t.projectId, 40) : (projects[0]?.id || ""),
+    labels: asArray(t?.labels).slice(0, 10).map((l: any) => clip(l, 40)).filter(Boolean),
+  })).filter((t) => t.id && t.title && t.projectId);
+  return { projects, members, tasks, updatedAt: new Date().toISOString() };
+}
+
+async function indexProjectCodes(env: Env, owner: string, ownerName: string, board: SharedBoard) {
+  const previous = (await readJson<string[]>(env, codesKey(owner))) || [];
+  const current: string[] = [];
+  for (const project of board.projects) {
+    if (!project.joinCode) continue;
+    const existing = await readJson<CodeRecord>(env, codeKey(project.joinCode));
+    if (existing && existing.owner !== owner) continue;
+    await env.SYNC_KV.put(
+      codeKey(project.joinCode),
+      JSON.stringify({ owner, ownerName, projectId: project.id, name: project.name, updatedAt: board.updatedAt } satisfies CodeRecord)
+    );
+    current.push(project.joinCode);
+  }
+  for (const code of previous) {
+    if (current.includes(code)) continue;
+    const existing = await readJson<CodeRecord>(env, codeKey(code));
+    if (existing && existing.owner === owner) await env.SYNC_KV.delete(codeKey(code));
+  }
+  await env.SYNC_KV.put(codesKey(owner), JSON.stringify(current));
+}
+
+async function findMember(env: Env, owner: string, email: string) {
+  return readJson<MemberRecord>(env, memberKey(owner, email));
+}
+
+function licenseFor(raw: any) {
+  if (!raw || !raw.expiresAt) return null;
+  const expires = new Date(raw.expiresAt).getTime();
+  return {
+    plan: clip(raw.plan, 20) || "custom",
+    expiresAt: raw.expiresAt,
+    daysLeft: Math.ceil((expires - Date.now()) / 86400000),
+    expired: expires < Date.now(),
+  };
+}
+
 type GeminiSchema = Record<string, unknown>;
 
 // Gemini blocks requests whose egress IP geolocates outside its supported regions.
@@ -590,6 +714,179 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const merged = mergeStore(store, body);
     await writeStore(env, key, merged);
     return json({ success: true, ...merged });
+  }
+
+  /* ---------- cộng tác: bảng việc, mã dự án, thành viên ---------- */
+  if (path === "/api/board" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body = await request.json().catch(() => ({}));
+    const board = normalizeBoard(body);
+    await env.SYNC_KV.put(boardKey(user.email), JSON.stringify(board));
+    await indexProjectCodes(env, user.email, user.name || user.email, board);
+    return json({ ok: true, updatedAt: board.updatedAt, projects: board.projects.length, tasks: board.tasks.length });
+  }
+
+  // Dự án chưa có việc vẫn phải tra được mã, nhưng không được xoá bảng việc đã có.
+  if (path === "/api/projects/register" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const incoming = asArray(body?.projects)
+      .slice(0, 50)
+      .map((p: any) => ({ id: clip(p?.id, 40), name: clip(p?.name, 80) || "Dự án", joinCode: cleanCode(p?.joinCode) }))
+      .filter((p) => p.id && /^[A-Z0-9-]{4,20}$/.test(p.joinCode));
+    if (!incoming.length) return json({ ok: false, error: "Chưa có dự án để đăng ký." }, 400);
+    const previous = await readJson<SharedBoard>(env, boardKey(user.email));
+    const merged = new Map<string, SharedBoard["projects"][number]>((previous?.projects || []).map((p) => [p.id, p]));
+    incoming.forEach((project) => merged.set(project.id, project));
+    const board: SharedBoard = {
+      projects: Array.from(merged.values()),
+      members: previous?.members || [],
+      tasks: previous?.tasks || [],
+      updatedAt: new Date().toISOString(),
+    };
+    await env.SYNC_KV.put(boardKey(user.email), JSON.stringify(board));
+    await indexProjectCodes(env, user.email, user.name || user.email, board);
+    return json({ ok: true, projects: board.projects.length });
+  }
+
+  if (path === "/api/projects/join" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const code = cleanCode(body?.code);
+    if (!code) return json({ ok: false, error: "Nhập mã tham gia dự án." }, 400);
+    const record = await readJson<CodeRecord>(env, codeKey(code));
+    if (!record) return json({ ok: false, error: "Mã không đúng hoặc dự án đã đổi mã." }, 404);
+    if (record.owner === user.email) return json({ ok: false, error: "Đây là dự án của chính bạn." }, 400);
+    const now = new Date().toISOString();
+    const existing = await findMember(env, record.owner, user.email);
+    const projects = (existing?.projects || []).filter((p) => p.id !== record.projectId);
+    projects.push({ id: record.projectId, name: record.name });
+    const member: MemberRecord = {
+      email: user.email,
+      name: user.name || user.email,
+      picture: user.picture || "",
+      owner: record.owner,
+      projects,
+      joinedAt: existing?.joinedAt || now,
+      lastSeen: now,
+    };
+    await env.SYNC_KV.put(memberKey(record.owner, user.email), JSON.stringify(member));
+    await env.SYNC_KV.put(
+      joinKey(user.email, record.owner, record.projectId),
+      JSON.stringify({
+        owner: record.owner,
+        ownerName: record.ownerName,
+        projectId: record.projectId,
+        projectName: record.name,
+        joinedAt: now,
+      })
+    );
+    return json({ ok: true, owner: record.owner, ownerName: record.ownerName, project: { id: record.projectId, name: record.name } });
+  }
+
+  if (path === "/api/projects/joined" && request.method === "GET") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const list = await env.SYNC_KV.list({ prefix: joinPrefix(user.email) });
+    const items = await Promise.all(list.keys.map((k) => readJson<any>(env, k.name)));
+    return json({ ok: true, projects: items.filter(Boolean) });
+  }
+
+  if (path === "/api/project/view" && request.method === "GET") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const owner = cleanEmail(url.searchParams.get("owner"));
+    const projectId = clip(url.searchParams.get("projectId"), 40);
+    if (!owner || !projectId) return json({ ok: false, error: "Thiếu thông tin dự án." }, 400);
+    const isOwner = owner === user.email;
+    const member = isOwner ? null : await findMember(env, owner, user.email);
+    if (!isOwner && (!member || !member.projects.some((p) => p.id === projectId))) {
+      return json({ ok: false, error: "Bạn chưa tham gia dự án này." }, 403);
+    }
+    const license = isOwner ? null : licenseFor(await readJson<any>(env, licKey(owner, user.email)));
+    if (license?.expired) {
+      return json({ ok: false, code: "license_expired", error: "Thời hạn xem dự án đã hết. Nhờ người mời gia hạn.", license }, 403);
+    }
+    const board = await readJson<SharedBoard>(env, boardKey(owner));
+    if (!board) return json({ ok: false, error: "Chủ dự án chưa đồng bộ bảng việc." }, 404);
+    const project = board.projects.find((p) => p.id === projectId);
+    if (!project) return json({ ok: false, error: "Dự án không còn tồn tại." }, 404);
+    const codeRecord = project.joinCode ? await readJson<CodeRecord>(env, codeKey(project.joinCode)) : null;
+    if (member) {
+      member.lastSeen = new Date().toISOString();
+      await env.SYNC_KV.put(memberKey(owner, user.email), JSON.stringify(member));
+    }
+    return json({
+      ok: true,
+      owner: { email: owner, name: codeRecord?.ownerName || owner },
+      project,
+      tasks: board.tasks.filter((t) => t.projectId === projectId),
+      members: board.members,
+      license,
+      updatedAt: board.updatedAt,
+    });
+  }
+
+  if (path === "/api/users" && request.method === "GET") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const list = await env.SYNC_KV.list({ prefix: memberPrefix(user.email) });
+    const records = (await Promise.all(list.keys.map((k) => readJson<MemberRecord>(env, k.name)))).filter(Boolean) as MemberRecord[];
+    const users = await Promise.all(
+      records.map(async (m) => ({
+        ...m,
+        license: licenseFor(await readJson<any>(env, licKey(user.email, m.email))),
+      }))
+    );
+    users.sort((a, b) => String(b.joinedAt).localeCompare(String(a.joinedAt)));
+    return json({ ok: true, users });
+  }
+
+  if (path === "/api/users/license" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const email = cleanEmail(body?.email);
+    const days = Math.round(Number(body?.days));
+    if (!email || !Number.isFinite(days) || days < 1 || days > 3650) {
+      return json({ ok: false, error: "Chọn thời hạn từ 1 đến 3650 ngày." }, 400);
+    }
+    const member = await findMember(env, user.email, email);
+    if (!member) return json({ ok: false, error: "Người này chưa tham gia dự án nào của bạn." }, 404);
+    const existing = await readJson<any>(env, licKey(user.email, email));
+    const baseMs = Math.max(Date.now(), existing?.expiresAt ? new Date(existing.expiresAt).getTime() : 0);
+    const expiresAt = new Date(baseMs + days * 86400000).toISOString();
+    const plan = days === 7 ? "week" : days === 30 ? "month" : days === 365 ? "year" : "custom";
+    const record = { plan, days, startedAt: new Date().toISOString(), expiresAt, updatedAt: new Date().toISOString() };
+    await env.SYNC_KV.put(licKey(user.email, email), JSON.stringify(record));
+    return json({ ok: true, license: licenseFor(record) });
+  }
+
+  if (path === "/api/users/license" && request.method === "DELETE") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const email = cleanEmail(url.searchParams.get("email"));
+    if (!email) return json({ ok: false, error: "Thiếu email." }, 400);
+    await env.SYNC_KV.delete(licKey(user.email, email));
+    return json({ ok: true });
+  }
+
+  if (path === "/api/users/member" && request.method === "DELETE") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const email = cleanEmail(url.searchParams.get("email"));
+    if (!email) return json({ ok: false, error: "Thiếu email." }, 400);
+    await env.SYNC_KV.delete(memberKey(user.email, email));
+    await env.SYNC_KV.delete(licKey(user.email, email));
+    const list = await env.SYNC_KV.list({ prefix: joinPrefix(email) });
+    const ownedPrefix = `${joinPrefix(email)}${user.email}:`;
+    for (const key of list.keys) {
+      if (key.name.startsWith(ownedPrefix)) await env.SYNC_KV.delete(key.name);
+    }
+    return json({ ok: true });
   }
 
   if (path === "/api/ai/summarize" && request.method === "POST") {

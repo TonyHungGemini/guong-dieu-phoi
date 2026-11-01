@@ -70,8 +70,8 @@
 
   A.renderBoard = function () {
     const filters = A.boardFilters;
-    const total = A.DATA.tasks.length;
-    const filtered = A.filterTasks(A.DATA.tasks, filters);
+    const total = A.projectTasks().length;
+    const filtered = A.filterTasks(A.projectTasks(), filters);
     const m = A.metrics();
     const active = A.activeFilters("board");
     const head = pageHead(
@@ -138,8 +138,8 @@
 
   A.renderList = function () {
     const filters = A.listFilters;
-    const total = A.DATA.tasks.length;
-    const filtered = A.filterTasks(A.DATA.tasks, filters);
+    const total = A.projectTasks().length;
+    const filtered = A.filterTasks(A.projectTasks(), filters);
     const m = A.metrics();
     const active = A.activeFilters("list");
     const head = pageHead(
@@ -222,7 +222,7 @@
     const lead = (first.getDay() + 6) % 7;
     const gridStart = A.addDays(A.dateISO(first), -lead);
     const tasksByDue = new Map();
-    A.DATA.tasks.forEach((t) => {
+    A.projectTasks().forEach((t) => {
       if (!t.due) return;
       if (!tasksByDue.has(t.due)) tasksByDue.set(t.due, []);
       tasksByDue.get(t.due).push(t);
@@ -256,7 +256,7 @@
     const selectedTasks = (tasksByDue.get(A.calSelected) || []).slice();
     const selectedDate = A.parseISO(A.calSelected) || A.parseISO(today);
     const selectedMs = msByDate.get(A.calSelected);
-    const upcoming = A.DATA.tasks
+    const upcoming = A.projectTasks()
       .filter((t) => t.status !== "done" && t.due && t.due >= today && t.due <= A.addDays(today, 10))
       .sort((a, b) => a.due.localeCompare(b.due) || A.taskScore(b) - A.taskScore(a))
       .slice(0, 6);
@@ -346,7 +346,10 @@
           <div class="card-t"><span class="card-idx">00</span> Dự án &amp; mã tham gia</div>
           <div class="card-sub">Mỗi dự án có mã riêng. Copy mã hoặc gửi email mời người liên quan.</div>
         </div>
-        <button class="btn btn-ghost btn-sm" type="button" data-add-project>${icon("plus")} Dự án mới</button>
+        <div class="proj-head-actions">
+          <button class="btn btn-ghost btn-sm" type="button" data-join-project>${icon("users")} Tham gia bằng mã</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-add-project>${icon("plus")} Dự án mới</button>
+        </div>
       </div>
       <div class="proj-list">
         ${projects.map((p) => `<article class="proj-card${p.id === activeId ? " on" : ""}">
@@ -358,7 +361,31 @@
           <button class="proj-invite" type="button" data-invite-project="${esc(p.id)}">${icon("send")} Mời</button>
         </article>`).join("")}
       </div>
-      <p class="proj-note">${icon("alert")} Mã tham gia và danh sách mời thuộc không gian này. Chia sẻ bảng việc giữa nhiều tài khoản sẽ bật ở bước đồng bộ dự án.</p>
+      <p class="proj-note">${icon("alert")} Người nhận đăng nhập Google rồi nhập mã để xem bảng việc của dự án này. Bạn theo dõi ai đã tham gia ở phần “Người dùng &amp; thời hạn”.</p>
+    </section>`;
+  }
+
+  function joinedProjects() {
+    const items = A.joinedProjects();
+    if (!items.length) return "";
+    return `<section class="card team-projects joined-projects">
+      <div class="card-h">
+        <div>
+          <div class="card-t"><span class="card-idx">01</span> Dự án đang theo dõi</div>
+          <div class="card-sub">Dự án của người khác mà bạn đã tham gia bằng mã.</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" data-join-project>${icon("plus")} Nhập mã khác</button>
+      </div>
+      <div class="proj-list">
+        ${items.map((item) => `<article class="proj-card">
+          <button class="proj-main" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}" title="Xem bảng việc của dự án">
+            <span class="proj-name">${esc(item.projectName)}</span>
+            <span class="proj-meta">Chủ: ${esc(item.ownerName)} · chỉ xem</span>
+          </button>
+          <button class="proj-invite" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}">${icon("external")} Xem</button>
+          <button class="proj-leave" type="button" data-leave-shared="${esc(item.owner)}|${esc(item.projectId)}" title="Bỏ theo dõi" aria-label="Bỏ theo dõi dự án ${esc(item.projectName)}">${icon("x")}</button>
+        </article>`).join("")}
+      </div>
     </section>`;
   }
 
@@ -383,7 +410,7 @@
         <span class="setup-dot">${num}</span>
         <div><b>${esc(title)}</b><small>${esc(text)}</small></div>
       </li>`;
-      return `${head}${projectStrip()}<section class="card team-empty">
+      return `${head}${projectStrip()}${joinedProjects()}<section class="card team-empty">
         <div class="te-main">
           <div class="setup-eyebrow">${icon("spark")} Bắt đầu</div>
           <h2 class="te-title">Bàn đã sẵn.<br><span>Thêm người vào tổ.</span></h2>
@@ -399,7 +426,7 @@
           ${step("3", "Giao việc đầu tiên", "Chọn người nhận, hạn và ưu tiên")}
         </ol>
       </section>
-      <div class="team-foot-note">${icon("alert")} Dữ liệu bảng việc chỉ nằm trên thiết bị này. Thêm email để gửi lời mời kèm mã tham gia dự án.</div>`;
+      <div class="team-foot-note">${icon("alert")} Bảng việc lưu trên máy này và đồng bộ lên máy chủ sau khi đăng nhập Google. Mời người bằng mã dự án để họ xem cùng bảng.</div>`;
     }
 
     const summary = `<div class="team-summary">
@@ -465,7 +492,7 @@
       </div>
     </section>` : "";
     const note = `<div class="team-foot-note">${icon("spark")} Tải = việc đang mở / năng lực tuần. Khi một người vượt 100%, hãy xem lại thứ tự ưu tiên trước khi giao thêm.</div>`;
-    return `${head}${summary}${projectStrip()}${cards}${unassignedCard}${note}`;
+    return `${head}${summary}${projectStrip()}${joinedProjects()}${cards}${unassignedCard}${note}`;
   };
 
   /* ============================================================
@@ -477,7 +504,7 @@
     const weekEnd = A.endOfWeek(A.todayISO());
     const wn = A.weekNumber(A.todayISO());
     const next = A.nextMilestone();
-    const doneTasks = A.DATA.tasks.filter((t) => t.status === "done" && t.completedAt && t.completedAt >= weekStart && t.completedAt <= weekEnd);
+    const doneTasks = A.projectTasks().filter((t) => t.status === "done" && t.completedAt && t.completedAt >= weekStart && t.completedAt <= weekEnd);
     const overdue = A.sortTasks(A.metrics().overdueTasks, "due");
     const lines = [];
     lines.push(`GUỒNG — BÁO CÁO TUẦN ${wn}`);
@@ -525,7 +552,7 @@
     const maxContrib = Math.max(1, ...contrib.map((s) => s.doneWeek));
     const wsStats = A.workstreams().map((w) => A.wsStats(w.id)).filter(Boolean);
     const overdue = A.sortTasks(m.overdueTasks, "due");
-    const doneWeek = A.DATA.tasks.filter((t) => t.status === "done" && t.completedAt && t.completedAt >= weekStart && t.completedAt <= weekEnd)
+    const doneWeek = A.projectTasks().filter((t) => t.status === "done" && t.completedAt && t.completedAt >= weekStart && t.completedAt <= weekEnd)
       .slice().sort((a, b) => String(b.completedAt).localeCompare(String(a.completedAt)));
     const next = A.nextMilestone();
     const narrative = `Tuần này tổ hoàn thành <b>${m.doneThisWeek} việc</b>, ${compare > 0 ? `nhiều hơn tuần trước <b>${compare} việc</b>` : compare === 0 ? "ngang nhịp tuần trước" : `ít hơn tuần trước <b>${-compare} việc</b>`}. ${top && top.doneWeek ? `<b>${esc(top.member.name)}</b> dẫn nhịp với ${top.doneWeek} việc xong.` : "Chưa ai gạch việc trong tuần này — bắt đầu từ việc nhỏ nhất."} ${m.overdue ? `Còn <b>${m.overdue} việc quá hạn</b> cần chốt sớm để không dồn sang tuần sau.` : "Không có việc quá hạn — một tuần giữ nhịp rất tốt."}`;

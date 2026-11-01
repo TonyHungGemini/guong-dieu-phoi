@@ -117,7 +117,7 @@
     const days = [];
     for (let i = 6; i >= 0; i -= 1) {
       const day = A.addDays(today, -i);
-      const value = A.DATA.tasks.filter((t) => t.status === "done" && t.completedAt === day).length;
+      const value = A.projectTasks().filter((t) => t.status === "done" && t.completedAt === day).length;
       const dt = A.parseISO(day);
       days.push({ day, value, label: dt ? ["CN", "T2", "T3", "T4", "T5", "T6", "T7"][dt.getDay()] : "—", today: i === 0 });
     }
@@ -239,7 +239,7 @@
     const spark = dailySpark();
     const circumference = 351.86;
     const ringOffset = (circumference * (1 - m.rate / 100)).toFixed(1);
-    const doneToday = A.DATA.tasks.filter((t) => t.status === "done" && t.completedAt === now);
+    const doneToday = A.projectTasks().filter((t) => t.status === "done" && t.completedAt === now);
     const compare = m.doneThisWeek - m.doneLastWeek;
     const compareText = compare > 0 ? `+${compare} so với tuần trước` : compare === 0 ? "Ngang tuần trước" : `${compare} so với tuần trước`;
     const memberStats = A.members().map((x) => A.memberStats(x.id)).filter(Boolean).sort((a, b) => b.load - a.load);
@@ -476,7 +476,7 @@
   A.renderToday = function () {
     const now = A.todayISO();
     const m = A.metrics();
-    const doneToday = A.DATA.tasks.filter((t) => t.status === "done" && t.completedAt === now).slice().reverse();
+    const doneToday = A.projectTasks().filter((t) => t.status === "done" && t.completedAt === now).slice().reverse();
     const open = A.openTasks();
     const urgent = A.sortTasks(open.filter((t) => t.due && t.due <= now), "smart");
     const top3 = A.smartTasks(3);

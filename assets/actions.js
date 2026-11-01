@@ -474,6 +474,7 @@
       id: isNew ? A.uid("t") : draft.id,
       title,
       desc: String(draft.desc || "").trim().slice(0, 4000),
+      projectId: original && original.projectId ? original.projectId : (A.DATA.settings.activeProjectId || null),
       status,
       priority: A.PRIORITY[draft.priority] ? draft.priority : "med",
       assignee: A.memberById(draft.assignee) ? draft.assignee : null,
@@ -769,18 +770,27 @@
       .catch(() => A.toast("Chưa copy được — hãy chọn và copy thủ công.", "error"));
   }
 
+  const APP_LINK = "https://guong.tonyhung.workers.dev/";
+
+  function inviteSubject(project) {
+    return `Mời bạn vào dự án ${project.name} trên GUỒNG`;
+  }
+
   function inviteText(project, member) {
-    const appUrl = `${location.origin}${location.pathname}`;
+    const name = member && member.name ? member.name : "bạn";
     return [
-      `Chào ${member && member.name ? member.name : "bạn"},`,
+      `Chào ${name},`,
       "",
-      `Mình mời bạn tham gia dự án “${project.name}” trên GUỒNG.`,
-      `Mã tham gia dự án: ${project.joinCode}`,
+      `Mình mời bạn vào dự án “${project.name}” trên GUỒNG — nơi cả nhóm theo dõi việc và báo cáo trong cùng một màn hình.`,
       "",
-      `Mở GUỒNG: ${appUrl}`,
-      "Vào mục Đội ngũ để xem thành viên và bảng việc của nhóm.",
+      "Làm 3 bước là vào được:",
+      `1) Mở link: ${APP_LINK}`,
+      "2) Bấm “Đăng nhập Google” và chọn đúng email này — không cần tạo mật khẩu.",
+      `3) Vào mục Đội ngũ → bấm “Tham gia bằng mã” → nhập: ${project.joinCode}`,
       "",
-      "Cảm ơn bạn!",
+      "Mẹo: sau khi đăng nhập, bấm “Cài đặt” để thêm GUỒNG ra màn hình chính, mở nhanh như app điện thoại.",
+      "",
+      "Cần gì cứ nhắn mình nhé.",
     ].join("\n");
   }
 
@@ -813,20 +823,152 @@
         </div>
         <div class="field" style="margin-top:12px">
           <label class="f-label" for="invitePreview">Nội dung lời mời</label>
-          <textarea class="input invite-preview" id="invitePreview" rows="7" readonly>${esc(inviteText(project, member))}</textarea>
+          <textarea class="input invite-preview" id="invitePreview" rows="11" readonly>${esc(inviteText(project, member))}</textarea>
         </div>
-        <div class="settings-note" style="margin-top:12px">${icon("spark")}<span>GUỒNG sẽ mở ứng dụng email của bạn với nội dung soạn sẵn. Mã tham gia là duy nhất cho từng dự án.</span></div>
+        <div class="settings-note" style="margin-top:12px">${icon("spark")}<span>Thư mời soạn sẵn 3 bước: mở link, đăng nhập Google, nhập mã ở mục Đội ngũ. Mã tham gia là duy nhất cho từng dự án.</span></div>
       </div>
       <div class="modal-foot">
         <span class="foot-note">Chưa gửi gì cho đến khi bạn bấm gửi trong ứng dụng email.</span>
         <div class="foot-right">
-          <button class="btn btn-ghost" type="button" data-close-overlay>Đóng</button>
           <button class="btn btn-ghost" type="button" data-invite-action="copy">${icon("copy")} Copy lời mời</button>
+          <button class="btn btn-ghost" type="button" data-invite-action="gmail">${icon("send")} Soạn Gmail</button>
           <button class="btn btn-accent" type="submit">${icon("send")} Mở email</button>
         </div>
       </div>
     </form>`;
     A.openOverlay(html, { focus: "#inviteEmail" });
+  }
+
+  function openJoinProject() {
+    if (!A.account) {
+      A.toast("Đăng nhập Google trước để tham gia dự án.", "info");
+      if (A.openAccount) A.openAccount();
+      return;
+    }
+    const html = `<form class="modal modal-narrow" id="joinForm" role="dialog" aria-modal="true" aria-labelledby="joinTitle">
+      <div class="modal-head">
+        <div>
+          <div class="modal-eyebrow">${icon("users")} Tham gia dự án</div>
+          <div class="modal-title" id="joinTitle">Nhập mã tham gia</div>
+          <div class="modal-sub">Mã do người mời gửi, dạng G-XXXXXX.</div>
+        </div>
+        <button class="icon-btn modal-close" type="button" data-close-overlay aria-label="Đóng">${icon("x")}</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label class="f-label" for="joinCode">Mã dự án</label>
+          <input class="input" id="joinCode" name="code" placeholder="G-ABC123" maxlength="20" autocomplete="off" required>
+        </div>
+        <div class="settings-note" style="margin-top:12px">${icon("spark")}<span>Sau khi tham gia, dự án nằm ở mục “Dự án đang theo dõi”. Bạn xem được bảng việc của chủ dự án; phần sửa vẫn thuộc về họ.</span></div>
+      </div>
+      <div class="modal-foot">
+        <span class="foot-note">Mã dùng một lần cho mỗi tài khoản Google.</span>
+        <div class="foot-right">
+          <button class="btn btn-ghost" type="button" data-close-overlay>Đóng</button>
+          <button class="btn btn-accent" type="submit">${icon("arrow-right")} Tham gia</button>
+        </div>
+      </div>
+    </form>`;
+    A.openOverlay(html, { focus: "#joinCode" });
+  }
+
+  function sharedTaskRow(task, memberName) {
+    const status = A.STATUS[task.status] ? A.STATUS[task.status].label : task.status;
+    const late = task.status !== "done" && task.due && task.due < A.todayISO();
+    const due = task.status === "done"
+      ? (task.completedAt ? `Xong ${A.fmtShort(task.completedAt)}` : "Đã xong")
+      : task.due
+        ? `${late ? "Quá hạn " : "Hạn "}${A.fmtShort(task.due)}`
+        : "Chưa hẹn";
+    return `<div class="shared-row${task.status === "done" ? " is-done" : ""}">
+      <div class="shared-main">
+        <strong>${esc(task.title)}</strong>
+        <span>${esc(memberName)} · ${esc(due)}</span>
+      </div>
+      <span class="shared-status s-${esc(task.status)}${late ? " is-late" : ""}">${esc(status)}</span>
+    </div>`;
+  }
+
+  function sharedProjectBody(data) {
+    const tasks = data.tasks || [];
+    const members = data.members || [];
+    const done = tasks.filter((t) => t.status === "done").length;
+    const overdue = tasks.filter((t) => t.status !== "done" && t.due && t.due < A.todayISO()).length;
+    const nameOf = (id) => (members.find((m) => m.id === id) || {}).name || "Chưa giao";
+    const sorted = tasks.slice().sort((a, b) => {
+      const doneA = a.status === "done" ? 1 : 0;
+      const doneB = b.status === "done" ? 1 : 0;
+      if (doneA !== doneB) return doneA - doneB;
+      return String(a.due || "9999-12-31").localeCompare(String(b.due || "9999-12-31"));
+    });
+    const licenseNote = data.license
+      ? `Bạn xem dự án này ${data.license.expired ? "đã hết hạn" : `còn ${data.license.daysLeft} ngày`}.`
+      : "Chủ dự án chưa đặt thời hạn cho bạn.";
+    return `<div class="shared-stats">
+        <div class="shared-stat"><b>${tasks.length}</b><span>việc</span></div>
+        <div class="shared-stat"><b>${tasks.length - done}</b><span>đang mở</span></div>
+        <div class="shared-stat${overdue ? " is-late" : ""}"><b>${overdue}</b><span>quá hạn</span></div>
+        <div class="shared-stat"><b>${members.length}</b><span>thành viên</span></div>
+      </div>
+      <div class="settings-note" style="margin-top:12px">${icon("alert")}<span>${esc(licenseNote)}</span></div>
+      ${sorted.length
+        ? `<div class="shared-list">${sorted.map((task) => sharedTaskRow(task, nameOf(task.assignee))).join("")}</div>`
+        : `<div class="lic-empty">${icon("layers")}<span>Dự án chưa có việc nào.</span></div>`}`;
+  }
+
+  function openSharedProject(owner, projectId) {
+    if (!owner || !projectId) return;
+    const entry = A.joinedProjects().find((x) => x.owner === owner && x.projectId === projectId);
+    const html = `<div class="modal account-modal shared-modal" role="dialog" aria-modal="true" aria-labelledby="sharedTitle">
+      <div class="modal-head">
+        <div>
+          <div class="modal-eyebrow">${icon("layers")} Dự án đang theo dõi</div>
+          <div class="modal-title" id="sharedTitle">${esc(entry ? entry.projectName : "Dự án được mời")}</div>
+          <div class="modal-sub" data-shared-sub>Đang tải bảng việc…</div>
+        </div>
+        <button class="icon-btn modal-close" type="button" data-close-overlay aria-label="Đóng">${icon("x")}</button>
+      </div>
+      <div class="modal-body" data-shared-body>
+        <div class="lic-empty">${icon("refresh")}<span>Đang tải…</span></div>
+      </div>
+      <div class="modal-foot">
+        <span class="foot-note">Chế độ chỉ xem — chỉ chủ dự án sửa được.</span>
+        <div class="foot-right">
+          <button class="btn btn-ghost" type="button" data-shared-refresh>${icon("refresh")} Làm mới</button>
+          <button class="btn btn-ghost" type="button" data-close-overlay>Đóng</button>
+        </div>
+      </div>
+    </div>`;
+    const overlay = A.openOverlay(html, { className: "account-overlay" });
+    if (!overlay) return;
+    const body = overlay.querySelector("[data-shared-body]");
+    const sub = overlay.querySelector("[data-shared-sub]");
+    const load = async () => {
+      body.innerHTML = `<div class="lic-empty">${icon("refresh")}<span>Đang tải…</span></div>`;
+      try {
+        const data = await apiJson(`/api/project/view?owner=${encodeURIComponent(owner)}&projectId=${encodeURIComponent(projectId)}`);
+        sub.textContent = `Chủ dự án: ${data.owner.name} · cập nhật ${A.timeAgo(data.updatedAt)}`;
+        body.innerHTML = sharedProjectBody(data);
+      } catch (err) {
+        sub.textContent = "Chưa tải được dự án";
+        const message = err.data && err.data.code === "license_expired"
+          ? "Thời hạn xem dự án đã hết. Nhờ người mời gia hạn trong mục Người dùng."
+          : err.status === 404
+            ? "Chủ dự án chưa đồng bộ bảng việc, hoặc dự án đã đổi mã."
+            : err.message;
+        body.innerHTML = `<div class="lic-empty">${icon("alert")}<span>${esc(message)}</span></div>`;
+      }
+    };
+    overlay.querySelector("[data-shared-refresh]").addEventListener("click", load);
+    load();
+  }
+
+  async function joinProject(code) {
+    return apiJson("/api/projects/join", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
   }
 
   function openProjectForm() {
@@ -1163,135 +1305,175 @@
      ============================================================ */
   const LICENSE_LABEL = { week: "1 tuần", month: "1 tháng", year: "1 năm" };
 
+  async function apiJson(url, options) {
+    const res = await fetch(url, Object.assign({ credentials: "same-origin" }, options || {}));
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (err) {
+      data = null;
+    }
+    if (!res.ok) {
+      const failure = new Error((data && data.error) || `Máy chủ trả về ${res.status}`);
+      failure.status = res.status;
+      failure.data = data;
+      throw failure;
+    }
+    return data;
+  }
+
   function licenseDate(iso) {
     const dt = iso ? new Date(iso) : null;
     return dt && !Number.isNaN(dt.getTime()) ? A.fmtShort(A.dateISO(dt)) : "—";
   }
 
-  function licenseRow(license) {
-    const days = A.licenseDaysLeft(license);
-    const state = days < 0 ? "off" : days <= 7 ? "warn" : "ok";
-    const status = days < 0 ? `Hết hạn ${licenseDate(license.expiresAt)}` : `Còn ${days} ngày · đến ${licenseDate(license.expiresAt)}`;
+  function userRow(user) {
+    const license = user.license || null;
+    const days = license ? license.daysLeft : null;
+    const state = !license ? "none" : license.expired ? "off" : days <= 7 ? "warn" : "ok";
+    const status = !license
+      ? "Chưa đặt hạn — xem không giới hạn"
+      : license.expired
+        ? `Đã hết hạn ${licenseDate(license.expiresAt)}`
+        : `Còn ${days} ngày · đến ${licenseDate(license.expiresAt)}`;
+    const projects = (user.projects || []).map((p) => `<span class="um-chip">${esc(p.name)}</span>`).join("");
+    const seen = user.lastSeen ? A.timeAgo(user.lastSeen) : "vừa tham gia";
     return `<div class="lic-row">
-      <span class="lic-state ${state}" aria-hidden="true"></span>
+      <span class="lic-state ${state === "none" ? "" : state}" aria-hidden="true"></span>
       <div class="lic-main">
-        <strong>${esc(license.name || license.email)}</strong>
-        <span>${esc(license.email)} · gói ${esc(LICENSE_LABEL[license.plan] || "tuỳ chọn")}</span>
+        <strong>${esc(user.name || user.email)}</strong>
+        <span>${esc(user.email)} · xem lần cuối ${esc(seen)} · tham gia ${esc(licenseDate(user.joinedAt))}</span>
         <em class="${state}">${esc(status)}</em>
+        <div class="um-chips">${projects}</div>
       </div>
       <div class="lic-acts">
-        <select class="select lic-days" data-lic-days="${esc(license.email)}" aria-label="Thời hạn gia hạn">
+        <select class="select lic-days" data-lic-days="${esc(user.email)}" aria-label="Thời hạn cấp thêm">
           <option value="7">+1 tuần</option>
           <option value="30" selected>+1 tháng</option>
           <option value="365">+1 năm</option>
         </select>
-        <button class="btn btn-ghost btn-sm" type="button" data-lic-renew="${esc(license.email)}">${icon("refresh")} Gia hạn</button>
-        <button class="icon-btn lic-del" type="button" data-lic-revoke="${esc(license.email)}" aria-label="Xoá ${esc(license.email)}" title="Thu hồi">${icon("trash")}</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-um-grant="${esc(user.email)}">${icon("refresh")} ${license ? "Gia hạn" : "Cấp hạn"}</button>
+        ${license ? `<button class="icon-btn lic-del" type="button" data-um-revoke="${esc(user.email)}" aria-label="Bỏ hạn của ${esc(user.email)}" title="Bỏ hạn">${icon("x")}</button>` : ""}
+        <button class="icon-btn lic-del" type="button" data-um-remove="${esc(user.email)}" aria-label="Xoá ${esc(user.email)}" title="Xoá khỏi dự án">${icon("trash")}</button>
       </div>
     </div>`;
   }
 
-  function licenseManagerHtml() {
-    const list = A.licenses().slice().sort((a, b) => String(a.expiresAt).localeCompare(String(b.expiresAt)));
-    const active = list.filter((item) => A.licenseDaysLeft(item) >= 0).length;
-    const owner = A.account ? A.account.email : "không gian này";
+  function usersModalHtml(state) {
+    const users = state.users || [];
+    const active = users.filter((u) => !u.license || !u.license.expired).length;
+    const owner = state.owner || "chưa đăng nhập";
+    let body = "";
+    if (state.loading) {
+      body = `<div class="lic-empty">${icon("refresh")}<span>Đang tải danh sách người tham gia…</span></div>`;
+    } else if (state.error) {
+      body = `<div class="lic-empty">${icon("alert")}<span>${esc(state.error)}</span></div>`;
+    } else if (!users.length) {
+      body = `<div class="lic-empty">${icon("users")}<span>Chưa ai tham gia. Gửi mã dự án cho người liên quan — khi họ đăng nhập Google và nhập mã, họ xuất hiện ở đây.</span></div>`;
+    } else {
+      body = `<div class="lic-list">${users.map(userRow).join("")}</div>`;
+    }
     return `<div class="modal account-modal user-manager" role="dialog" aria-modal="true" aria-labelledby="usersTitle">
       <div class="modal-head">
         <div>
           <div class="modal-eyebrow">${icon("users")} QUẢN LÝ NGƯỜI DÙNG</div>
-          <div class="modal-title" id="usersTitle">Thời hạn sử dụng</div>
-          <div class="modal-sub">${list.length} người dùng · ${active} đang còn hạn · ${esc(owner)}</div>
+          <div class="modal-title" id="usersTitle">Người tham gia dự án</div>
+          <div class="modal-sub">${users.length} người · ${active} đang xem được · ${esc(owner)}</div>
         </div>
         <button class="icon-btn modal-close" type="button" data-close-overlay aria-label="Đóng">${icon("x")}</button>
       </div>
       <div class="modal-body">
-        <form class="lic-form" id="licenseForm">
-          <div class="lic-form-grid">
-            <div class="field">
-              <label class="f-label" for="licName">Tên người dùng</label>
-              <input class="input" id="licName" name="name" maxlength="60" placeholder="Ví dụ: Lan Hương" autocomplete="off">
-            </div>
-            <div class="field">
-              <label class="f-label" for="licEmail">Email Google</label>
-              <input class="input" id="licEmail" name="email" type="email" maxlength="120" placeholder="ten@gmail.com" autocomplete="email" required>
-            </div>
-            <div class="field">
-              <label class="f-label" for="licPlan">Thời hạn</label>
-              <select class="select" id="licPlan" name="days">
-                <option value="7">1 tuần</option>
-                <option value="30" selected>1 tháng</option>
-                <option value="365">1 năm</option>
-              </select>
-            </div>
-            <button class="btn btn-accent lic-add" type="submit">${icon("plus")} Cấp quyền</button>
-          </div>
-          <div class="settings-desc">Gia hạn cộng dồn từ ngày còn lại. Người đã có trong danh sách sẽ được cộng thêm thời hạn.</div>
-        </form>
-        ${list.length
-          ? `<div class="lic-list">${list.map(licenseRow).join("")}</div>`
-          : `<div class="lic-empty">${icon("users")}<span>Chưa có người dùng nào được đặt thời hạn. Thêm email để bắt đầu.</span></div>`}
-        <div class="settings-note" style="margin-top:14px">${icon("alert")}<span>Sổ thời hạn lưu trong không gian tài khoản này và đồng bộ cùng dữ liệu GUỒNG. Việc tự chặn đăng nhập khi hết hạn cần bật thêm ở máy chủ; hiện GUỒNG dùng danh sách này để nhắc và gia hạn.</span></div>
+        ${body}
+        <div class="settings-note" style="margin-top:14px">${icon("alert")}<span>Danh sách này do máy chủ ghi nhận khi người khác đăng nhập Google và nhập mã dự án của bạn. Đặt thời hạn để tự khoá quyền xem khi hết hạn; xoá để gỡ người khỏi danh sách hiện tại.</span></div>
       </div>
       <div class="modal-foot">
         <span class="foot-note">Múi giờ tính theo thiết bị này.</span>
-        <div class="foot-right"><button class="btn btn-ghost" type="button" data-close-overlay>Đóng</button></div>
+        <div class="foot-right">
+          <button class="btn btn-ghost" type="button" data-um-refresh>${icon("refresh")} Làm mới</button>
+          <button class="btn btn-ghost" type="button" data-close-overlay>Đóng</button>
+        </div>
       </div>
     </div>`;
   }
 
-  function wireLicenseManager(overlay) {
-    const form = overlay.querySelector("#licenseForm");
-    if (form) {
-      form.addEventListener("submit", (event) => {
-        event.preventDefault();
-        const email = String(form.elements.email.value || "").trim();
-        const name = String(form.elements.name.value || "").trim();
-        const days = Number(form.elements.days.value) || 30;
-        const result = A.grantLicense(email, days, name);
-        if (result.error) {
-          A.toast(result.error, "error");
-          return;
-        }
-        overlay.innerHTML = licenseManagerHtml();
-        wireLicenseManager(overlay);
-        A.toast(`Đã cấp ${LICENSE_LABEL[result.license.plan]} cho ${result.license.email}.`, "success");
+  async function loadUsers(overlay) {
+    const owner = A.account ? A.account.email : "";
+    overlay.innerHTML = usersModalHtml({ loading: true, owner });
+    wireUsers(overlay);
+    try {
+      const data = await apiJson("/api/users");
+      overlay.innerHTML = usersModalHtml({ users: data.users || [], owner });
+    } catch (err) {
+      overlay.innerHTML = usersModalHtml({
+        error: err.status === 401 ? "Đăng nhập Google để xem người tham gia dự án của bạn." : err.message,
+        owner,
       });
     }
-    overlay.querySelectorAll("[data-lic-renew]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const email = btn.dataset.licRenew;
-        const select = overlay.querySelector(`[data-lic-days="${email.replace(/"/g, '\\"')}"]`);
+    wireUsers(overlay);
+  }
+
+  function wireUsers(overlay) {
+    const refresh = overlay.querySelector("[data-um-refresh]");
+    if (refresh) refresh.addEventListener("click", () => loadUsers(overlay));
+
+    overlay.querySelectorAll("[data-um-grant]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const email = btn.dataset.umGrant;
+        const select = overlay.querySelector(`[data-lic-days="${email}"]`);
         const days = select ? Number(select.value) || 30 : 30;
-        const result = A.grantLicense(email, days);
-        if (result.error) {
-          A.toast(result.error, "error");
-          return;
+        btn.disabled = true;
+        try {
+          const data = await apiJson("/api/users/license", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email, days }),
+          });
+          A.toast(`Đã cấp ${LICENSE_LABEL[data.license?.plan] || `${days} ngày`} cho ${email}.`, "success");
+          await loadUsers(overlay);
+        } catch (err) {
+          btn.disabled = false;
+          A.toast(err.message, "error");
         }
-        overlay.innerHTML = licenseManagerHtml();
-        wireLicenseManager(overlay);
-        A.toast(`Đã gia hạn ${email} thêm ${days === 365 ? "1 năm" : days === 30 ? "1 tháng" : "1 tuần"}.`, "success");
       });
     });
-    overlay.querySelectorAll("[data-lic-revoke]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const email = btn.dataset.licRevoke;
-        const ok = window.confirm(`Thu hồi thời hạn của ${email}?`);
-        if (!ok) return;
-        A.revokeLicense(email);
-        overlay.innerHTML = licenseManagerHtml();
-        wireLicenseManager(overlay);
-        A.toast(`Đã thu hồi ${email}.`, "info");
+
+    overlay.querySelectorAll("[data-um-revoke]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const email = btn.dataset.umRevoke;
+        if (!window.confirm(`Bỏ giới hạn thời hạn của ${email}?`)) return;
+        try {
+          await apiJson(`/api/users/license?email=${encodeURIComponent(email)}`, { method: "DELETE" });
+          A.toast(`Đã bỏ thời hạn của ${email}.`, "info");
+          await loadUsers(overlay);
+        } catch (err) {
+          A.toast(err.message, "error");
+        }
+      });
+    });
+
+    overlay.querySelectorAll("[data-um-remove]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const email = btn.dataset.umRemove;
+        if (!window.confirm(`Xoá ${email} khỏi danh sách người tham gia? Họ mở lại được nếu còn mã dự án.`)) return;
+        try {
+          await apiJson(`/api/users/member?email=${encodeURIComponent(email)}`, { method: "DELETE" });
+          A.toast(`Đã xoá ${email} khỏi danh sách.`, "info");
+          await loadUsers(overlay);
+        } catch (err) {
+          A.toast(err.message, "error");
+        }
       });
     });
   }
 
   function openUserManager() {
     if (A._overlays.length) A.closeAllOverlays();
-    const overlay = A.openOverlay(licenseManagerHtml(), { className: "account-overlay", focus: "#licEmail" });
+    const overlay = A.openOverlay(usersModalHtml({ loading: true }), { className: "account-overlay" });
     if (!overlay) return;
-    wireLicenseManager(overlay);
+    loadUsers(overlay);
   }
   A.openUserManager = openUserManager;
+  A.apiJson = apiJson;
 
   function downloadFile(filename, content, type) {
     const blob = new Blob([content], { type });
@@ -1600,6 +1782,26 @@
       openProjectForm();
       return;
     }
+    if (event.target.closest("[data-join-project]")) {
+      openJoinProject();
+      return;
+    }
+    const openSharedBtn = event.target.closest("[data-open-shared]");
+    if (openSharedBtn) {
+      const [owner, projectId] = String(openSharedBtn.dataset.openShared || "").split("|");
+      openSharedProject(owner, projectId);
+      return;
+    }
+    const leaveSharedBtn = event.target.closest("[data-leave-shared]");
+    if (leaveSharedBtn) {
+      const [owner, projectId] = String(leaveSharedBtn.dataset.leaveShared || "").split("|");
+      const entry = A.joinedProjects().find((x) => x.owner === owner && x.projectId === projectId);
+      if (!window.confirm(`Bỏ theo dõi dự án “${entry ? entry.projectName : "này"}”?`)) return;
+      A.removeJoinedProject(owner, projectId);
+      A.render({ animate: false });
+      A.toast("Đã bỏ dự án khỏi danh sách theo dõi.", "info");
+      return;
+    }
     const inviteProjectBtn = event.target.closest("[data-invite-project]");
     if (inviteProjectBtn) {
       openInvite(inviteProjectBtn.dataset.inviteProject);
@@ -1630,6 +1832,24 @@
       if (kind === "copy" && form) {
         const preview = form.querySelector("#invitePreview");
         if (preview) copyText(preview.value, "Đã copy lời mời.");
+      }
+      if (kind === "gmail" && form) {
+        const emailInput = form.querySelector("#inviteEmail");
+        const email = (emailInput ? emailInput.value : "").trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+          A.toast("Nhập email người nhận trước khi gửi.", "error");
+          if (emailInput) emailInput.focus();
+          return;
+        }
+        const project = A.projectById(form.dataset.projectId);
+        if (!project) {
+          A.toast("Dự án không còn tồn tại.", "error");
+          return;
+        }
+        const member = form.dataset.memberId ? A.memberById(form.dataset.memberId) : null;
+        const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(email)}&su=${encodeURIComponent(inviteSubject(project))}&body=${encodeURIComponent(inviteText(project, member))}`;
+        window.open(gmailUrl, "_blank", "noopener");
+        A.toast("Đã mở Gmail với thư mời soạn sẵn.", "info");
       }
       return;
     }
@@ -1912,10 +2132,38 @@
         return;
       }
       const member = form.dataset.memberId ? A.memberById(form.dataset.memberId) : null;
-      const subject = `Lời mời tham gia dự án ${project.name} trên GUỒNG`;
+      const subject = inviteSubject(project);
       const body = inviteText(project, member);
       window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
       A.toast("Đang mở ứng dụng email với nội dung soạn sẵn.", "info");
+    } else if (event.target.matches("#joinForm")) {
+      event.preventDefault();
+      const form = event.target;
+      const code = String(form.elements.code.value || "").trim().toUpperCase();
+      if (!code) {
+        form.elements.code.focus();
+        return;
+      }
+      const submit = form.querySelector('button[type="submit"]');
+      if (submit) submit.disabled = true;
+      joinProject(code)
+        .then((data) => {
+          A.addJoinedProject({
+            owner: data.owner,
+            ownerName: data.ownerName,
+            projectId: data.project.id,
+            projectName: data.project.name,
+          });
+          A.closeAllOverlays();
+          A.render({ animate: false });
+          A.toast(`Đã tham gia “${data.project.name}”.`, "success");
+          openSharedProject(data.owner, data.project.id);
+        })
+        .catch((err) => {
+          if (submit) submit.disabled = false;
+          A.toast(err.message || "Chưa tham gia được dự án.", "error");
+          form.elements.code.focus();
+        });
     }
   });
 
