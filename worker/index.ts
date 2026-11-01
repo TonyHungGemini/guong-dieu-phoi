@@ -228,7 +228,7 @@ async function readUser(request: Request, env: Env): Promise<SessionUser | null>
   }
 }
 
-async function fetchGoogleUser(accessToken: string) {
+async function fetchGoogleUser(accessToken: string, env: Env) {
   const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
     headers: { authorization: `Bearer ${accessToken}` },
   });
@@ -236,6 +236,10 @@ async function fetchGoogleUser(accessToken: string) {
   const data: any = await res.json();
   if (!data?.email) throw new Error("Không lấy được email từ Google");
   if (data.email_verified === false) throw new Error("Email Google chưa được xác minh");
+  const info = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(accessToken)}`);
+  if (!info.ok) throw new Error("Không xác minh được token với Google");
+  const meta: any = await info.json();
+  if (meta?.aud !== env.GOOGLE_CLIENT_ID) throw new Error("Token không phát hành cho ứng dụng này");
   return {
     email: String(data.email).toLowerCase(),
     name: data.name || data.email,
@@ -243,9 +247,9 @@ async function fetchGoogleUser(accessToken: string) {
   };
 }
 
-async function resolveStoreKey(request: Request, env: Env, fallbackEmail?: string | null) {
+async function resolveStoreKey(request: Request, env: Env) {
   const user = await readUser(request, env);
-  return storeKey(user?.email || fallbackEmail);
+  return user?.email ? storeKey(user.email) : null;
 }
 
 type GeminiSchema = Record<string, unknown>;
@@ -465,7 +469,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const accessToken = String(body?.access_token || "");
     if (!accessToken) return json({ ok: false, error: "Thiếu access token" }, 400);
     try {
-      const user = await fetchGoogleUser(accessToken);
+      const user = await fetchGoogleUser(accessToken, env);
       return json({ ok: true, ...user }, 200, { "set-cookie": await userCookie(env, user) });
     } catch (err: any) {
       return json({ ok: false, error: err?.message || "Đăng nhập Google thất bại" }, 401);
@@ -477,17 +481,22 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   if (path === "/api/sync/stream" && request.method === "GET") {
-    return sseStream(env, await resolveStoreKey(request, env, url.searchParams.get("userEmail")));
+    const key = await resolveStoreKey(request, env);
+    if (!key) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    return sseStream(env, key);
   }
 
   if (path === "/api/sync/data" && request.method === "GET") {
-    const store = await readStore(env, await resolveStoreKey(request, env, url.searchParams.get("userEmail")));
+    const key = await resolveStoreKey(request, env);
+    if (!key) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const store = await readStore(env, key);
     return json({ success: true, ...store });
   }
 
   if (path === "/api/sync/data" && request.method === "POST") {
     const body: any = await request.json().catch(() => ({}));
-    const key = await resolveStoreKey(request, env, body?.userEmail);
+    const key = await resolveStoreKey(request, env);
+    if (!key) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
     const store = await readStore(env, key);
     const merged = mergeStore(store, body);
     await writeStore(env, key, merged);

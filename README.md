@@ -162,13 +162,16 @@ Bản đầy đủ chạy trên Cloudflare Worker: tĩnh tại Workers Assets, �
 
 ### Bắt buộc một lần: OAuth origin
 
-Google Identity Services chỉ cấp token khi origin nằm trong OAuth client `80167301652-...apps.googleusercontent.com`:
+Google Identity Services chỉ cấp token khi origin nằm trong OAuth client `777663854457-0ghqdqjn3hoahavpthcafafn741etg8v.apps.googleusercontent.com` (client "GUỒNG", khai báo ở `GOOGLE_CLIENT_ID` trong `wrangler.jsonc` và trong `assets/reports.js` — đổi client thì sửa cả hai chỗ):
 
 1. Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID (Web).
 2. **Authorized JavaScript origins** thêm:
    - `https://guong-dieu-phoi.tonyhunggemini.workers.dev`
    - `http://localhost:3100` (khi chạy `wrangler dev --port 3100`)
 3. Lưu, đợi ~5 phút rồi đăng nhập lại. Nếu thiếu, Google báo `origin_mismatch`.
+4. App đang ở chế độ External/Testing thì phải thêm email người dùng vào **Audience → Test users**.
+
+Worker xác minh token với Google và kiểm tra `aud` khớp `GOOGLE_CLIENT_ID`; `/api/sync/*` chỉ trả dữ liệu khi đã có phiên Google (không còn nhận `?userEmail=`).
 
 ### Nhập báo cáo thật từ Bee
 
