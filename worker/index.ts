@@ -418,11 +418,15 @@ function mergeBoards(existing: SharedBoard | null, incoming: SharedBoard): Share
       continue;
     }
     const previous = taskMap.get(task.id);
-    if (!previous || ts(task.updatedAt) >= ts(previous.updatedAt)) taskMap.set(task.id, task);
+    if (!previous || ts(task.updatedAt) > ts(previous.updatedAt)) taskMap.set(task.id, task);
   }
   const projectMap = new Map<string, SharedBoard["projects"][number]>();
   for (const project of existing?.projects || []) projectMap.set(project.id, project);
-  for (const project of incoming.projects) projectMap.set(project.id, project);
+  // Mã tham gia do máy chủ giữ: máy mới mở app có thể đẩy mã tạm trước khi tải board.
+  for (const project of incoming.projects) {
+    const previous = projectMap.get(project.id);
+    projectMap.set(project.id, previous?.joinCode ? { ...project, joinCode: previous.joinCode } : project);
+  }
   const memberMap = new Map<string, SharedBoard["members"][number]>();
   for (const member of existing?.members || []) memberMap.set(member.id, member);
   for (const member of incoming.members) memberMap.set(member.id, member);
@@ -901,7 +905,10 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     if (!incoming.length) return json({ ok: false, error: "Chưa có dự án để đăng ký." }, 400);
     const previous = await readJson<SharedBoard>(env, boardKey(user.email));
     const merged = new Map<string, SharedBoard["projects"][number]>((previous?.projects || []).map((p) => [p.id, p]));
-    incoming.forEach((project) => merged.set(project.id, project));
+    incoming.forEach((project) => {
+      const existing = merged.get(project.id);
+      merged.set(project.id, existing?.joinCode ? { ...project, joinCode: existing.joinCode } : project);
+    });
     const board: SharedBoard = {
       projects: Array.from(merged.values()),
       members: previous?.members || [],

@@ -523,6 +523,7 @@
   App.MONTHS = MONTHS;
 
   let boardTimer = null;
+  let pulledFor = "";
   let registeredSig = "";
   function boardSnapshot() {
     return {
@@ -567,9 +568,11 @@
       boardTimer = null;
       if (!App.account || !App.account.email) return;
       if (location.hostname.endsWith("github.io")) return;
+      // Máy mới phải tải board trước khi đẩy, tránh mã/tên dự án tạm ghi đè bản thật.
+      if (pulledFor !== App.account.email) return;
       const board = boardSnapshot();
       registerProjects(board);
-      if (!board.tasks.length && !board.members.length) return;
+      if (!board.projects.length && !board.members.length && !board.tasks.length) return;
       fetch("/api/board", {
         method: "POST",
         credentials: "same-origin",
@@ -617,6 +620,36 @@
         changed = true;
       }
     }
+    for (const raw of remote.projects || []) {
+      const id = cleanId(raw && raw.id);
+      if (!id) continue;
+      const name = cleanText(raw && raw.name, 80) || "Dự án";
+      const code = String((raw && raw.joinCode) || "").trim().toUpperCase();
+      const project = App.projects().find((p) => p.id === id);
+      if (!project) {
+        App.projects().push({
+          id,
+          name,
+          joinCode: /^[A-Z0-9-]{4,20}$/.test(code) ? code : S.makeJoinCode(),
+          createdAt: new Date().toISOString(),
+        });
+        changed = true;
+        continue;
+      }
+      if (project.name !== name) {
+        project.name = name;
+        changed = true;
+      }
+      if (code && /^[A-Z0-9-]{4,20}$/.test(code) && project.joinCode !== code) {
+        project.joinCode = code;
+        changed = true;
+      }
+    }
+    const active = App.projectById(App.DATA.settings.activeProjectId);
+    if (active && App.DATA.settings.projectName !== active.name) {
+      App.DATA.settings.projectName = active.name;
+      changed = true;
+    }
     if (deleted.size) {
       const before = App.DATA.tasks.length;
       App.DATA.tasks = App.DATA.tasks.filter((t) => !deleted.has(t.id));
@@ -639,7 +672,7 @@
         continue;
       }
       const localAt = Date.parse(local.updatedAt || "") || 0;
-      if (!remoteAt || remoteAt <= localAt) continue;
+      if (!remoteAt || remoteAt < localAt) continue;
       const status = STATUS[raw.status] ? raw.status : local.status;
       local.title = cleanText(raw.title, 200) || local.title;
       local.status = status;
@@ -668,8 +701,11 @@
       const res = await fetch("/api/board", { credentials: "same-origin", cache: "no-store" });
       if (!res.ok) return false;
       const data = await res.json();
+      const firstPull = pulledFor !== App.account.email;
+      pulledFor = App.account.email;
       const changed = mergeRemoteBoard(data && data.board);
       if (changed && typeof App.onBoardPulled === "function") App.onBoardPulled();
+      if (firstPull) syncBoard();
       return changed;
     } catch (err) {
       return false;
@@ -1234,6 +1270,7 @@
     const previousEmail = App.account ? App.account.email : null;
     persist(App.DATA);
     App.account = next;
+    if (previousEmail !== next.email) pulledFor = "";
     writeAccountProfile(next);
     const key = scopedKey(next.email);
     let state = readStoredState(key);
@@ -1256,6 +1293,7 @@
     if (!App.account) return;
     persist(App.DATA);
     App.account = null;
+    pulledFor = "";
     writeAccountProfile(null);
     App.KEY = KEY;
     App.DATA = loadState(KEY);
