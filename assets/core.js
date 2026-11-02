@@ -267,6 +267,7 @@
       comments,
       createdAt: parseISO(raw.createdAt) ? raw.createdAt : todayISO(),
       completedAt,
+      updatedAt: cleanStamp(raw.updatedAt) || "",
       prevStatus: STATUS[raw.prevStatus] && raw.prevStatus !== "done" ? raw.prevStatus : null,
     };
   }
@@ -382,6 +383,13 @@
       if (!task.projectId || !projectIds.has(task.projectId)) task.projectId = activeProjectId;
     });
     const licenses = normalizeLicenses(settings);
+    const deletedTaskIds = Array.isArray(settings.deletedTaskIds)
+      ? settings.deletedTaskIds.slice(-300).map((item) => {
+          const id = String(item && item.id ? item.id : "").trim();
+          if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) return null;
+          return { id, at: cleanStamp(item.at) || new Date().toISOString() };
+        }).filter(Boolean)
+      : [];
     const joined = Array.isArray(settings.joined)
       ? settings.joined.slice(0, 100).map((item) => {
           if (!item || typeof item !== "object") return null;
@@ -396,6 +404,7 @@
             status: item.status === "pending" || item.status === "declined" ? item.status : "joined",
             requestedAt: cleanStamp(item.requestedAt) || "",
             joinedAt: cleanStamp(item.joinedAt) || new Date().toISOString(),
+            assigner: Boolean(item.assigner),
           };
         }).filter(Boolean)
       : [];
@@ -411,6 +420,7 @@
         activeProjectId,
         licenses,
         joined,
+        deletedTaskIds,
       },
       members,
       tasks,
@@ -518,9 +528,11 @@
     return {
       projects: App.projects().map((p) => ({ id: p.id, name: p.name, joinCode: p.joinCode })),
       members: App.members().map((m) => ({ id: m.id, name: m.name, role: m.role })),
+      deletedTaskIds: (App.DATA.settings.deletedTaskIds || []).slice(-300),
       tasks: App.DATA.tasks.map((t) => ({
         id: t.id,
         title: t.title,
+        desc: t.desc,
         status: t.status,
         priority: t.priority,
         assignee: t.assignee,
@@ -529,6 +541,8 @@
         completedAt: t.completedAt,
         projectId: t.projectId,
         labels: t.labels,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt || "",
       })),
     };
   }
@@ -566,6 +580,113 @@
       });
     }, 1200);
   }
+
+  function mergeRemoteBoard(remote) {
+    if (!remote || !Array.isArray(remote.tasks)) return false;
+    let changed = false;
+    const localDeleted = new Set((App.DATA.settings.deletedTaskIds || []).map((item) => String(item && item.id ? item.id : "")));
+    const deleted = new Set((remote.deletedTaskIds || []).map((d) => String(d && d.id ? d.id : "")));
+    localDeleted.forEach((id) => id && deleted.add(id));
+    const memberIds = new Set(App.DATA.members.map((m) => m.id));
+    const referenced = new Set(remote.tasks.map((t) => cleanId(t && t.assignee)).filter(Boolean));
+    for (const raw of remote.members || []) {
+      const id = cleanId(raw && raw.id);
+      const name = cleanText(raw && raw.name, 60);
+      if (!id || !name) continue;
+      if (!memberIds.has(id)) {
+        if (!referenced.has(id)) continue;
+        App.DATA.members.push({
+          id,
+          name,
+          short: initials(name),
+          role: cleanText(raw.role, 60) || "Thành viên",
+          color: colorFor("", App.DATA.members.length),
+          capacity: 8,
+          email: "",
+          invitedAt: new Date().toISOString(),
+          inviteStatus: "joined",
+        });
+        memberIds.add(id);
+        changed = true;
+        continue;
+      }
+      const member = App.DATA.members.find((m) => m.id === id);
+      const role = cleanText(raw.role, 60);
+      if (member && role && member.role !== role) {
+        member.role = role;
+        changed = true;
+      }
+    }
+    if (deleted.size) {
+      const before = App.DATA.tasks.length;
+      App.DATA.tasks = App.DATA.tasks.filter((t) => !deleted.has(t.id));
+      if (App.DATA.tasks.length !== before) changed = true;
+    }
+    const byId = new Map(App.DATA.tasks.map((t) => [t.id, t]));
+    for (const raw of remote.tasks) {
+      const id = cleanId(raw && raw.id);
+      if (!id || deleted.has(id)) continue;
+      const remoteAt = Date.parse(raw.updatedAt || "") || 0;
+      const local = byId.get(id);
+      if (!local) {
+        const seed = { ...raw, desc: raw.desc || "", subtasks: [], links: [], comments: [] };
+        const used = new Set(App.DATA.tasks.map((t) => t.id));
+        const task = normalizeTask(seed, used, new Set(App.DATA.members.map((m) => m.id)));
+        if (!task) continue;
+        App.DATA.tasks.push(task);
+        byId.set(task.id, task);
+        changed = true;
+        continue;
+      }
+      const localAt = Date.parse(local.updatedAt || "") || 0;
+      if (!remoteAt || remoteAt <= localAt) continue;
+      const status = STATUS[raw.status] ? raw.status : local.status;
+      local.title = cleanText(raw.title, 200) || local.title;
+      local.status = status;
+      local.priority = PRIORITY[raw.priority] ? raw.priority : local.priority;
+      local.assignee = cleanId(raw.assignee);
+      local.workstream = wsIds.has(raw.workstream) ? raw.workstream : local.workstream;
+      local.due = parseISO(raw.due) ? raw.due : null;
+      local.completedAt = status === "done" ? (parseISO(raw.completedAt) ? raw.completedAt : todayISO()) : null;
+      local.projectId = cleanId(raw.projectId) || local.projectId;
+      local.labels = Array.isArray(raw.labels) ? raw.labels.filter((l) => labelSet.has(l)) : local.labels;
+      if (typeof raw.desc === "string") local.desc = cleanText(raw.desc, 4000);
+      local.updatedAt = cleanStamp(raw.updatedAt) || local.updatedAt;
+      changed = true;
+    }
+    if (changed) persist(App.DATA);
+    return changed;
+  }
+
+  let pullingBoard = false;
+  async function pullBoard() {
+    if (pullingBoard) return false;
+    if (!App.account || !App.account.email) return false;
+    if (location.hostname.endsWith("github.io")) return false;
+    pullingBoard = true;
+    try {
+      const res = await fetch("/api/board", { credentials: "same-origin", cache: "no-store" });
+      if (!res.ok) return false;
+      const data = await res.json();
+      const changed = mergeRemoteBoard(data && data.board);
+      if (changed && typeof App.onBoardPulled === "function") App.onBoardPulled();
+      return changed;
+    } catch (err) {
+      return false;
+    } finally {
+      pullingBoard = false;
+    }
+  }
+
+  App.pullBoard = pullBoard;
+  App.touchTask = function (task) {
+    if (task) task.updatedAt = new Date().toISOString();
+  };
+  App.markTaskDeleted = function (id) {
+    if (!id) return;
+    const list = App.DATA.settings.deletedTaskIds || [];
+    App.DATA.settings.deletedTaskIds = list.filter((item) => item && item.id !== id).concat({ id, at: new Date().toISOString() }).slice(-300);
+  };
 
   App.save = function () {
     persist(App.DATA);
@@ -609,6 +730,7 @@
       existing.ownerName = entry.ownerName || existing.ownerName;
       existing.projectName = entry.projectName || existing.projectName;
       existing.status = entry.status || existing.status || "joined";
+      existing.assigner = entry.assigner === undefined ? Boolean(existing.assigner) : Boolean(entry.assigner);
       if (entry.requestedAt) existing.requestedAt = entry.requestedAt;
       App.save();
       return existing;
@@ -621,6 +743,7 @@
       status: entry.status || "joined",
       requestedAt: entry.requestedAt || "",
       joinedAt: entry.joinedAt || new Date().toISOString(),
+      assigner: Boolean(entry.assigner),
     };
     list.push(item);
     App.save();

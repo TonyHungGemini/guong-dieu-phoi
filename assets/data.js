@@ -52,6 +52,7 @@
         activeProjectId: "p-main",
         licenses: [],
         joined: [],
+        deletedTaskIds: [],
       },
       members: [],
       tasks: [],

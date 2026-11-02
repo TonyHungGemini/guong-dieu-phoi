@@ -267,21 +267,27 @@ function fileDisposition(name: string, inline: boolean) {
 }
 
 /* ---------- cộng tác: bảng việc chia sẻ theo dự án ---------- */
+type SharedTask = {
+  id: string;
+  title: string;
+  status: string;
+  priority: string;
+  assignee: string | null;
+  workstream: string;
+  due: string | null;
+  completedAt: string | null;
+  projectId: string;
+  labels: string[];
+  desc?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 type SharedBoard = {
   projects: { id: string; name: string; joinCode: string }[];
   members: { id: string; name: string; role?: string }[];
-  tasks: {
-    id: string;
-    title: string;
-    status: string;
-    priority: string;
-    assignee: string | null;
-    workstream: string;
-    due: string | null;
-    completedAt: string | null;
-    projectId: string;
-    labels: string[];
-  }[];
+  tasks: SharedTask[];
+  deletedTaskIds?: { id: string; at: string }[];
   updatedAt: string;
 };
 
@@ -301,6 +307,7 @@ type MemberRecord = {
   memberId?: string;
   role?: string;
   capacity?: number;
+  assignerProjects?: string[];
   projects: { id: string; name: string }[];
   joinedAt: string;
   lastSeen: string;
@@ -378,8 +385,126 @@ function normalizeBoard(body: any): SharedBoard {
     completedAt: /^\d{4}-\d{2}-\d{2}$/.test(String(t?.completedAt || "")) ? String(t.completedAt) : null,
     projectId: projectIds.has(t?.projectId) ? clip(t.projectId, 40) : (projects[0]?.id || ""),
     labels: asArray(t?.labels).slice(0, 10).map((l: any) => clip(l, 40)).filter(Boolean),
+    desc: clip(t?.desc, 2000),
+    createdAt: /^\d{4}-\d{2}-\d{2}/.test(String(t?.createdAt || "")) ? String(t.createdAt) : "",
+    updatedAt: /^\d{4}-\d{2}-\d{2}T/.test(String(t?.updatedAt || "")) ? String(t.updatedAt) : "",
   })).filter((t) => t.id && t.title && t.projectId);
-  return { projects, members, tasks, updatedAt: new Date().toISOString() };
+  const deletedTaskIds = asArray(body?.deletedTaskIds)
+    .slice(0, 300)
+    .map((d: any) => ({ id: clip(d?.id, 40), at: clip(d?.at, 40) }))
+    .filter((d) => /^[A-Za-z0-9_-]{1,40}$/.test(d.id));
+  return { projects, members, tasks, deletedTaskIds, updatedAt: new Date().toISOString() };
+}
+
+function ts(value: unknown) {
+  const ms = new Date(String(value || "")).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+// Board POST is no longer a blind overwrite: người giao việc có thể đã thêm
+// hoặc sửa việc trên máy chủ trong khi app của trưởng dự án chưa tải lại.
+function mergeBoards(existing: SharedBoard | null, incoming: SharedBoard): SharedBoard {
+  const tombstones = new Map<string, string>();
+  for (const item of [...(existing?.deletedTaskIds || []), ...(incoming.deletedTaskIds || [])]) {
+    if (item?.id) tombstones.set(item.id, item.at || new Date().toISOString());
+  }
+  const taskMap = new Map<string, SharedTask>();
+  for (const task of existing?.tasks || []) {
+    if (!tombstones.has(task.id)) taskMap.set(task.id, task);
+  }
+  for (const task of incoming.tasks) {
+    if (tombstones.has(task.id)) {
+      taskMap.delete(task.id);
+      continue;
+    }
+    const previous = taskMap.get(task.id);
+    if (!previous || ts(task.updatedAt) >= ts(previous.updatedAt)) taskMap.set(task.id, task);
+  }
+  const projectMap = new Map<string, SharedBoard["projects"][number]>();
+  for (const project of existing?.projects || []) projectMap.set(project.id, project);
+  for (const project of incoming.projects) projectMap.set(project.id, project);
+  const memberMap = new Map<string, SharedBoard["members"][number]>();
+  for (const member of existing?.members || []) memberMap.set(member.id, member);
+  for (const member of incoming.members) memberMap.set(member.id, member);
+  return {
+    projects: Array.from(projectMap.values()),
+    members: Array.from(memberMap.values()),
+    tasks: Array.from(taskMap.values()),
+    deletedTaskIds: Array.from(tombstones, ([id, at]) => ({ id, at })).slice(-300),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+type ProjectAccess = {
+  error?: Response;
+  board?: SharedBoard;
+  project?: SharedBoard["projects"][number];
+  member?: MemberRecord;
+  role?: "owner" | "assigner" | "member";
+};
+
+async function projectAccess(env: Env, user: SessionUser, owner: string, projectId: string): Promise<ProjectAccess> {
+  const board = await readJson<SharedBoard>(env, boardKey(owner));
+  if (!board) return { error: json({ ok: false, error: "Chủ dự án chưa đồng bộ bảng việc." }, 404) };
+  const project = board.projects.find((p) => p.id === projectId);
+  if (!project) return { error: json({ ok: false, error: "Dự án không còn tồn tại." }, 404) };
+  if (owner === user.email) return { board, project, role: "owner" };
+  const member = await findMember(env, owner, user.email);
+  if (!member || !member.projects.some((p) => p.id === projectId)) {
+    return { error: json({ ok: false, error: "Bạn chưa tham gia dự án này." }, 403) };
+  }
+  const license = licenseFor(await readJson<any>(env, licKey(owner, user.email)));
+  if (license?.expired) {
+    return { error: json({ ok: false, code: "license_expired", error: "Thời hạn xem dự án đã hết.", license }, 403) };
+  }
+  const assigner = (member.assignerProjects || []).includes(projectId);
+  return { board, project, member, role: assigner ? "assigner" : "member" };
+}
+
+function taskOf(board: SharedBoard, projectId: string, taskId: string) {
+  return board.tasks.find((t) => t.id === taskId && t.projectId === projectId) || null;
+}
+
+function saveTaskFields(body: any, previous: SharedTask | null, projectId: string, memberIds: Set<string>): SharedTask {
+  const now = new Date().toISOString();
+  const has = (key: string) => Boolean(body && Object.prototype.hasOwnProperty.call(body, key));
+  const title = clip(body?.title, 200).trim() || previous?.title || "";
+  const statusRaw = clip(body?.status, 20);
+  const status = ["todo", "doing", "review", "done"].includes(statusRaw) ? statusRaw : previous?.status || "todo";
+  const priorityRaw = clip(body?.priority, 10);
+  const priority = ["high", "med", "low"].includes(priorityRaw) ? priorityRaw : previous?.priority || "med";
+  const assigneeRaw = body?.assignee === null || body?.assignee === "" ? null : clip(body?.assignee, 40);
+  const assignee = has("assignee")
+    ? (assigneeRaw && memberIds.has(assigneeRaw) ? assigneeRaw : null)
+    : previous?.assignee || null;
+  const dueRaw = String(body?.due || "");
+  const due = has("due")
+    ? (/^\d{4}-\d{2}-\d{2}$/.test(dueRaw) ? dueRaw : null)
+    : previous?.due || null;
+  const completedAt = status === "done"
+    ? (previous?.status === "done" ? previous.completedAt : now.slice(0, 10))
+    : null;
+  return {
+    id: previous?.id || `t${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`,
+    title,
+    status,
+    priority,
+    assignee,
+    workstream: previous?.workstream || "w1",
+    due,
+    completedAt,
+    projectId,
+    labels: previous?.labels || [],
+    desc: body?.desc === undefined ? previous?.desc || "" : clip(body.desc, 2000),
+    createdAt: previous?.createdAt || now.slice(0, 10),
+    updatedAt: now,
+  };
+}
+
+async function saveBoard(env: Env, owner: string, ownerName: string, board: SharedBoard) {
+  board.updatedAt = new Date().toISOString();
+  await env.SYNC_KV.put(boardKey(owner), JSON.stringify(board));
+  await indexProjectCodes(env, owner, ownerName, board);
 }
 
 async function indexProjectCodes(env: Env, owner: string, ownerName: string, board: SharedBoard) {
@@ -745,11 +870,20 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
   }
 
   /* ---------- cộng tác: bảng việc, mã dự án, thành viên ---------- */
+  if (path === "/api/board" && request.method === "GET") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const board = await readJson<SharedBoard>(env, boardKey(user.email));
+    return json({ ok: true, board });
+  }
+
   if (path === "/api/board" && request.method === "POST") {
     const user = await readUser(request, env);
     if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
     const body = await request.json().catch(() => ({}));
-    const board = normalizeBoard(body);
+    const incoming = normalizeBoard(body);
+    const previous = await readJson<SharedBoard>(env, boardKey(user.email));
+    const board = mergeBoards(previous, incoming);
     await env.SYNC_KV.put(boardKey(user.email), JSON.stringify(board));
     await indexProjectCodes(env, user.email, user.name || user.email, board);
     return json({ ok: true, updatedAt: board.updatedAt, projects: board.projects.length, tasks: board.tasks.length });
@@ -772,6 +906,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       projects: Array.from(merged.values()),
       members: previous?.members || [],
       tasks: previous?.tasks || [],
+      deletedTaskIds: previous?.deletedTaskIds || [],
       updatedAt: new Date().toISOString(),
     };
     await env.SYNC_KV.put(boardKey(user.email), JSON.stringify(board));
@@ -841,11 +976,17 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
     const list = await env.SYNC_KV.list({ prefix: joinPrefix(user.email) });
     const items = await Promise.all(list.keys.map((k) => readJson<any>(env, k.name)));
+    const projects = await Promise.all(
+      items.filter(Boolean).map(async (item: any) => {
+        const member = await readJson<MemberRecord>(env, memberKey(item.owner, user.email));
+        return { ...item, assigner: Boolean(member && (member.assignerProjects || []).includes(item.projectId)) };
+      })
+    );
     const waiting = await env.SYNC_KV.list({ prefix: joinReqPrefix(user.email) });
     const pendingItems = await Promise.all(waiting.keys.map((k) => readJson<any>(env, k.name)));
     return json({
       ok: true,
-      projects: items.filter(Boolean),
+      projects,
       pending: pendingItems.filter((item) => item && item.status === "pending"),
     });
   }
@@ -896,17 +1037,127 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       member.lastSeen = new Date().toISOString();
       await env.SYNC_KV.put(memberKey(owner, user.email), JSON.stringify(member));
     }
-    const self = member && member.memberId ? { id: member.memberId, role: member.role || "", capacity: member.capacity || 8 } : null;
+    const self = member
+      ? {
+          id: member.memberId || "",
+          role: member.role || "",
+          capacity: member.capacity || 8,
+          assigner: (member.assignerProjects || []).includes(projectId),
+        }
+      : null;
+    const memberList = await env.SYNC_KV.list({ prefix: memberPrefix(owner) });
+    const memberRecords = (await Promise.all(memberList.keys.map((k) => readJson<MemberRecord>(env, k.name)))).filter(Boolean) as MemberRecord[];
+    const assigners = memberRecords
+      .filter((m) => m.memberId && (m.assignerProjects || []).includes(projectId))
+      .map((m) => ({ id: m.memberId as string, name: m.name || m.email }));
     return json({
       ok: true,
       owner: { email: owner, name: codeRecord?.ownerName || owner },
       project,
       tasks: board.tasks.filter((t) => t.projectId === projectId),
       members: board.members,
+      assigners,
       me: self,
       license,
       updatedAt: board.updatedAt,
     });
+  }
+
+  // Trưởng dự án bổ nhiệm/bãi miễn người giao việc theo từng dự án.
+  if (path === "/api/projects/assigner" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const email = cleanEmail(body?.email);
+    const projectId = clip(body?.projectId, 40);
+    const enabled = body?.enabled !== false;
+    if (!email || !projectId) return json({ ok: false, error: "Thiếu người hoặc dự án." }, 400);
+    if (email === user.email) return json({ ok: false, error: "Bạn là trưởng dự án, luôn có quyền giao việc." }, 400);
+    const member = await findMember(env, user.email, email);
+    if (!member) return json({ ok: false, error: "Người này chưa tham gia dự án của bạn." }, 404);
+    if (!member.projects.some((p) => p.id === projectId)) {
+      return json({ ok: false, error: "Người này không thuộc dự án đã chọn." }, 400);
+    }
+    const board = await readJson<SharedBoard>(env, boardKey(user.email));
+    if (!board || !board.projects.some((p) => p.id === projectId)) {
+      return json({ ok: false, error: "Dự án không còn tồn tại." }, 404);
+    }
+    if (!member.memberId) {
+      const requested = clip(body?.memberId, 40).replace(/[^A-Za-z0-9_-]/g, "");
+      member.memberId = /^[A-Za-z0-9_-]{3,40}$/.test(requested)
+        ? requested
+        : `m${crypto.randomUUID().replace(/-/g, "").slice(0, 10)}`;
+    }
+    const roles = new Set(member.assignerProjects || []);
+    if (enabled) roles.add(projectId);
+    else roles.delete(projectId);
+    member.assignerProjects = Array.from(roles);
+    await env.SYNC_KV.put(memberKey(user.email, email), JSON.stringify(member));
+    if (!board.members.some((m) => m.id === member.memberId)) {
+      board.members.push({ id: member.memberId, name: member.name || email, role: member.role || "Thành viên" });
+      await saveBoard(env, user.email, user.name || user.email, board);
+    }
+    return json({ ok: true, enabled, member });
+  }
+
+  // Người giao việc tạo/sửa việc trực tiếp trên bảng của trưởng dự án.
+  if (path === "/api/project/task" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const owner = cleanEmail(body?.owner);
+    const projectId = clip(body?.projectId, 40);
+    if (!owner || !projectId) return json({ ok: false, error: "Thiếu thông tin dự án." }, 400);
+    const access = await projectAccess(env, user, owner, projectId);
+    if (access.error) return access.error;
+    if (access.role === "member") {
+      return json({ ok: false, error: "Chỉ trưởng dự án hoặc người giao việc mới được giao việc." }, 403);
+    }
+    const board = access.board as SharedBoard;
+    const taskId = clip(body?.taskId, 40);
+    const previous = taskId ? taskOf(board, projectId, taskId) : null;
+    if (taskId && !previous) return json({ ok: false, error: "Công việc không còn tồn tại." }, 404);
+    if (!previous && !clip(body?.title, 200).trim()) {
+      return json({ ok: false, error: "Đặt tên công việc trước khi giao." }, 400);
+    }
+    const memberIds = new Set(board.members.map((m) => m.id));
+    const task = saveTaskFields(body, previous, projectId, memberIds);
+    if (previous) Object.assign(previous, task);
+    else board.tasks.push(task);
+    await saveBoard(env, owner, user.name || owner, board);
+    return json({ ok: true, task });
+  }
+
+  // Thành viên cập nhật trạng thái việc của mình; người giao việc chấm mọi trạng thái.
+  if (path === "/api/project/status" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const owner = cleanEmail(body?.owner);
+    const projectId = clip(body?.projectId, 40);
+    const taskId = clip(body?.taskId, 40);
+    const status = clip(body?.status, 20);
+    if (!owner || !projectId || !taskId || !["todo", "doing", "review", "done"].includes(status)) {
+      return json({ ok: false, error: "Thiếu thông tin cập nhật." }, 400);
+    }
+    const access = await projectAccess(env, user, owner, projectId);
+    if (access.error) return access.error;
+    const board = access.board as SharedBoard;
+    const task = taskOf(board, projectId, taskId);
+    if (!task) return json({ ok: false, error: "Công việc không còn tồn tại." }, 404);
+    if (access.role === "member") {
+      if (!access.member?.memberId || task.assignee !== access.member.memberId) {
+        return json({ ok: false, error: "Bạn chỉ cập nhật được việc của mình." }, 403);
+      }
+      if (status === "done") {
+        return json({ ok: false, error: "Người giao việc sẽ chấm hoàn thành sau khi bạn gửi duyệt." }, 403);
+      }
+    }
+    task.status = status;
+    task.completedAt = status === "done" ? (task.completedAt || new Date().toISOString().slice(0, 10)) : null;
+    task.updatedAt = new Date().toISOString();
+    await saveBoard(env, owner, user.name || owner, board);
+    return json({ ok: true, task });
   }
 
   if (path === "/api/projects/leave" && request.method === "DELETE") {
@@ -930,6 +1181,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const member = await findMember(env, owner, user.email);
     if (member) {
       member.projects = member.projects.filter((p) => p.id !== projectId);
+      member.assignerProjects = (member.assignerProjects || []).filter((id) => id !== projectId);
       if (member.projects.length) {
         await env.SYNC_KV.put(memberKey(owner, user.email), JSON.stringify(member));
       } else {
@@ -1021,6 +1273,7 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       memberId: memberId || existing?.memberId || "",
       role,
       capacity,
+      assignerProjects: existing?.assignerProjects || [],
       projects: Array.from(projects.values()),
       joinedAt: existing?.joinedAt || now,
       lastSeen: now,

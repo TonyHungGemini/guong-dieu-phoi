@@ -347,6 +347,7 @@
           <div class="card-sub">Mỗi dự án có mã riêng. Bạn là trưởng dự án — mời người và quản lý thời gian xem.</div>
         </div>
         <div class="proj-head-actions">
+          <button class="btn btn-ghost btn-sm" type="button" data-manage-members>${icon("users")} Bổ nhiệm giao việc</button>
           <button class="btn btn-ghost btn-sm" type="button" data-join-project>${icon("users")} Tham gia bằng mã</button>
           <button class="btn btn-ghost btn-sm" type="button" data-add-project>${icon("plus")} Dự án mới</button>
         </div>
@@ -361,7 +362,7 @@
           <button class="proj-invite" type="button" data-invite-project="${esc(p.id)}">${icon("send")} Mời</button>
         </article>`).join("")}
       </div>
-      <p class="proj-note">${icon("alert")} Người nhận đăng nhập Google rồi nhập mã để gửi yêu cầu tham gia. Bạn xác nhận, chọn vai trò và năng lực cho họ ở khối “Người xin tham gia”; sau đó cấp thời hạn xem và xử lý gia hạn ở “Người dùng &amp; thời hạn”.</p>
+      <p class="proj-note">${icon("alert")} Người nhận đăng nhập Google rồi nhập mã để gửi yêu cầu tham gia. Bạn xác nhận, chọn vai trò và năng lực cho họ ở khối “Người xin tham gia”; bổ nhiệm người giao việc theo từng dự án ở “Người dùng &amp; thời hạn”. Người giao việc được giao việc và chấm hoàn thành thay bạn; bạn vẫn giữ quyền quản lý thành viên và đóng dự án.</p>
     </section>`;
   }
 
@@ -421,17 +422,20 @@
         ${items.map((item) => {
           const pending = item.status === "pending";
           const declined = item.status === "declined";
+          const assigner = !pending && !declined && item.assigner;
           const meta = pending
             ? `Trưởng dự án: ${item.ownerName} · chờ xác nhận${item.requestedAt ? ` · gửi ${A.timeAgo(item.requestedAt)}` : ""}`
             : declined
               ? `Trưởng dự án: ${item.ownerName} · chưa được chấp nhận`
-              : `Trưởng dự án: ${item.ownerName} · chỉ xem`;
-          return `<article class="proj-card${pending ? " is-pending" : ""}${declined ? " is-declined" : ""}">
-          <button class="proj-main" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}" title="${pending ? "Xem trạng thái yêu cầu" : "Xem bảng việc của dự án"}">
+              : assigner
+                ? `Trưởng dự án: ${item.ownerName} · người giao việc`
+                : `Trưởng dự án: ${item.ownerName} · chỉ xem`;
+          return `<article class="proj-card${pending ? " is-pending" : ""}${declined ? " is-declined" : ""}${assigner ? " is-assigner" : ""}">
+          <button class="proj-main" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}" title="${pending ? "Xem trạng thái yêu cầu" : assigner ? "Mở không gian giao việc" : "Xem bảng việc của dự án"}">
             <span class="proj-name">${esc(item.projectName)}</span>
             <span class="proj-meta">${esc(meta)}</span>
           </button>
-          <button class="proj-invite" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}">${icon(pending ? "clock" : "external")} ${pending ? "Trạng thái" : "Xem"}</button>
+          <button class="proj-invite" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}">${icon(pending ? "clock" : assigner ? "send" : "external")} ${pending ? "Trạng thái" : assigner ? "Giao việc" : "Xem"}</button>
           <button class="proj-leave" type="button" data-leave-shared="${esc(item.owner)}|${esc(item.projectId)}" title="Bỏ theo dõi" aria-label="Bỏ theo dõi dự án ${esc(item.projectName)}">${icon("x")}</button>
         </article>`;
         }).join("")}

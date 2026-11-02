@@ -36,12 +36,14 @@
       task.status = task.prevStatus || "todo";
       task.prevStatus = null;
       task.completedAt = null;
+      A.touchTask(task);
       A.log("move", task.id, me, `đã mở lại «${task.title}»`);
       A.toast("Đã mở lại công việc.", "info");
     } else {
       task.prevStatus = task.status;
       task.status = "done";
       task.completedAt = A.todayISO();
+      A.touchTask(task);
       A.log("done", task.id, me, `đã hoàn thành «${task.title}»`);
       A.toast("Một việc nữa được gạch.", "success");
       A.confetti();
@@ -67,6 +69,7 @@
       }
       A.log("move", task.id, me, `đã chuyển «${task.title}» sang ${A.STATUS[status].label}`);
     }
+    A.touchTask(task);
     A.toast(`Đã chuyển sang «${A.STATUS[status].label}».`, status === "done" ? "success" : "info");
     A.refresh();
   }
@@ -77,6 +80,7 @@
     const member = A.memberById(memberId);
     if (!member) return;
     task.assignee = member.id;
+    A.touchTask(task);
     A.log("note", task.id, A.meId(), `đã giao «${task.title}» cho ${member.name}`);
     A.toast(`Đã giao việc cho ${member.name}.`, "success");
     A.refresh();
@@ -168,6 +172,7 @@
       comments: [],
       createdAt: A.todayISO(),
       completedAt: null,
+      updatedAt: "",
       prevStatus: null,
     };
     return initial;
@@ -492,6 +497,7 @@
       })).filter((c) => c.text),
       createdAt: isNew ? A.todayISO() : original.createdAt,
       completedAt: null,
+      updatedAt: new Date().toISOString(),
       prevStatus: null,
     };
     let newComments = [];
@@ -545,6 +551,7 @@
       confirmLabel: "Xoá công việc",
       danger: true,
     }, () => {
+      A.markTaskDeleted(task.id);
       A.DATA.tasks = A.DATA.tasks.filter((t) => t.id !== task.id);
       A.DATA.focus = A.DATA.focus.filter((f) => f.taskId !== task.id);
       A.DATA.activity = A.DATA.activity.filter((a) => a.taskId !== task.id);
@@ -859,7 +866,7 @@
           <label class="f-label" for="joinCode">Mã dự án</label>
           <input class="input" id="joinCode" name="code" placeholder="G-ABC123" maxlength="20" autocomplete="off" required>
         </div>
-        <div class="settings-note" style="margin-top:12px">${icon("spark")}<span>Trưởng dự án nhận thông báo và xác nhận bạn vào dự án. Khi được duyệt, dự án nằm ở mục “Dự án đang theo dõi”; bạn xem được bảng việc, phần sửa vẫn thuộc về họ.</span></div>
+        <div class="settings-note" style="margin-top:12px">${icon("spark")}<span>Trưởng dự án nhận thông báo và xác nhận bạn vào dự án. Khi được duyệt, dự án nằm ở mục “Dự án đang theo dõi”; nếu được bổ nhiệm làm người giao việc, bạn có thể giao việc và chấm hoàn thành cho đội ngay trong dự án.</span></div>
       </div>
       <div class="modal-foot">
         <span class="foot-note">Mã dùng một lần cho mỗi tài khoản Google.</span>
@@ -872,27 +879,68 @@
     A.openOverlay(html, { focus: "#joinCode" });
   }
 
-  function sharedTaskRow(task, memberName, mine) {
-    const status = A.STATUS[task.status] ? A.STATUS[task.status].label : task.status;
+  function sharedTaskRow(task, memberName, mine, opts) {
+    const o = opts || {};
+    const canAssign = !!o.canAssign;
+    const canEdit = canAssign || (mine && task.assignee === o.meId);
     const late = task.status !== "done" && task.due && task.due < A.todayISO();
     const due = task.status === "done"
       ? (task.completedAt ? `Xong ${A.fmtShort(task.completedAt)}` : "Đã xong")
       : task.due
         ? `${late ? "Quá hạn " : "Hạn "}${A.fmtShort(task.due)}`
         : "Chưa hẹn";
+    const status = A.STATUS[task.status] ? A.STATUS[task.status].label : task.status;
+    const statusControl = canEdit && !(task.status === "done" && !canAssign)
+      ? `<select class="select shared-select" data-shared-status="${esc(task.id)}" aria-label="Trạng thái ${esc(task.title)}">
+          ${(canAssign ? A.STATUS_ORDER : ["todo", "doing", "review"]).map((s) => `<option value="${s}"${s === task.status ? " selected" : ""}>${esc(A.STATUS[s].label)}</option>`).join("")}
+        </select>`
+      : `<span class="shared-status s-${esc(task.status)}${late ? " is-late" : ""}">${esc(status)}</span>`;
+    const assigneeControl = canAssign
+      ? `<select class="select shared-select" data-shared-assignee="${esc(task.id)}" aria-label="Người nhận ${esc(task.title)}">
+          <option value=""${!task.assignee ? " selected" : ""}>Chưa giao</option>
+          ${(o.members || []).map((m) => `<option value="${esc(m.id)}"${m.id === task.assignee ? " selected" : ""}>${esc(m.name)}</option>`).join("")}
+        </select>`
+      : "";
     return `<div class="shared-row${task.status === "done" ? " is-done" : ""}${mine ? " is-mine" : ""}">
       <div class="shared-main">
         <strong>${esc(task.title)}</strong>
         <span>${esc(memberName)} · ${esc(due)}${mine ? " · Bạn" : ""}</span>
       </div>
-      <span class="shared-status s-${esc(task.status)}${late ? " is-late" : ""}">${esc(status)}</span>
+      ${assigneeControl || statusControl ? `<div class="shared-controls">${assigneeControl}${statusControl}</div>` : `<span class="shared-status s-${esc(task.status)}${late ? " is-late" : ""}">${esc(status)}</span>`}
     </div>`;
+  }
+
+  function sharedCreateForm(data) {
+    const members = data.members || [];
+    return `<form class="shared-create" data-shared-create>
+      <div class="sc-head">${icon("send")}<span>Giao việc cho đội</span><em>Việc mới vào cột Chưa làm</em></div>
+      <div class="sc-grid">
+        <label class="sc-title"><span>Tên việc</span><input class="input" name="title" maxlength="200" placeholder="Ví dụ: Chốt bảng giá gói tháng" autocomplete="off" required></label>
+        <label><span>Giao cho</span>
+          <select class="select" name="assignee">
+            <option value="">Chưa giao</option>
+            ${members.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label><span>Hạn</span><input class="input" type="date" name="due"></label>
+        <label><span>Ưu tiên</span>
+          <select class="select" name="priority">
+            <option value="high">Cao</option>
+            <option value="med" selected>Vừa</option>
+            <option value="low">Thấp</option>
+          </select>
+        </label>
+      </div>
+      <button class="btn btn-accent btn-sm" type="submit">${icon("plus")} Giao việc</button>
+    </form>`;
   }
 
   function sharedProjectBody(data) {
     const tasks = data.tasks || [];
     const members = data.members || [];
-    const mine = data.me ? data.me.id : "";
+    const canAssign = Boolean(data.me && data.me.assigner);
+    const meId = data.me ? data.me.id : "";
+    const mineTask = (t) => Boolean(meId && t.assignee === meId);
     const done = tasks.filter((t) => t.status === "done").length;
     const overdue = tasks.filter((t) => t.status !== "done" && t.due && t.due < A.todayISO()).length;
     const nameOf = (id) => (members.find((m) => m.id === id) || {}).name || "Chưa giao";
@@ -905,20 +953,27 @@
     const licenseNote = data.license
       ? `Bạn xem dự án này ${data.license.expired ? "đã hết hạn" : `còn ${data.license.daysLeft} ngày`}.`
       : "Trưởng dự án chưa đặt thời hạn cho bạn.";
-    const roleNote = data.me && data.me.role
-      ? `Vai trò của bạn: ${data.me.role} · năng lực ${data.me.capacity} việc/tuần. `
-      : "";
-    const mineCount = mine ? tasks.filter((t) => t.assignee === mine).length : 0;
-    return `<div class="shared-stats">
+    const assignerNames = (data.assigners || []).map((x) => x.name).filter(Boolean).join(", ");
+    const roleNote = canAssign
+      ? `Bạn là người giao việc trong dự án: được giao việc, đổi người nhận và chấm hoàn thành. Bạn không quản lý thành viên hay đóng dự án.${data.me && data.me.role ? ` Vai trò: ${data.me.role} · năng lực ${data.me.capacity} việc/tuần.` : ""}`
+      : data.me && data.me.role
+        ? `Vai trò của bạn: ${data.me.role} · năng lực ${data.me.capacity} việc/tuần.${assignerNames ? ` Người giao việc: ${assignerNames}.` : ""}`
+        : assignerNames
+          ? `Người giao việc: ${assignerNames}.`
+          : "";
+    const mineCount = meId ? tasks.filter((t) => t.assignee === meId).length : 0;
+    const opts = { canAssign, meId, members };
+    return `${canAssign ? sharedCreateForm(data) : ""}
+      <div class="shared-stats">
         <div class="shared-stat"><b>${tasks.length}</b><span>việc</span></div>
         <div class="shared-stat"><b>${tasks.length - done}</b><span>đang mở</span></div>
         <div class="shared-stat${overdue ? " is-late" : ""}"><b>${overdue}</b><span>quá hạn</span></div>
-        <div class="shared-stat${mine ? " is-mine" : ""}"><b>${mine ? mineCount : members.length}</b><span>${mine ? "việc của bạn" : "thành viên"}</span></div>
+        <div class="shared-stat${meId ? " is-mine" : ""}"><b>${meId ? mineCount : members.length}</b><span>${meId ? "việc của bạn" : "thành viên"}</span></div>
       </div>
       <div class="settings-note" style="margin-top:12px">${icon("alert")}<span>${esc(roleNote + licenseNote)}</span></div>
       ${sorted.length
-        ? `<div class="shared-list">${sorted.map((task) => sharedTaskRow(task, nameOf(task.assignee), mine && task.assignee === mine)).join("")}</div>`
-        : `<div class="lic-empty">${icon("layers")}<span>Dự án chưa có việc nào.</span></div>`}`;
+        ? `<div class="shared-list">${sorted.map((task) => sharedTaskRow(task, nameOf(task.assignee), mineTask(task), opts)).join("")}</div>`
+        : `<div class="lic-empty">${icon("layers")}<span>Dự án chưa có việc nào.${canAssign ? " Giao việc đầu tiên ở khung phía trên." : ""}</span></div>`}`;
   }
 
   function openSharedProject(owner, projectId) {
@@ -937,7 +992,7 @@
         <div class="lic-empty">${icon("refresh")}<span>Đang tải…</span></div>
       </div>
       <div class="modal-foot">
-        <span class="foot-note">Chế độ chỉ xem — trưởng dự án giữ quyền sửa.</span>
+        <span class="foot-note" data-shared-footnote>Chế độ chỉ xem — trưởng dự án giữ quyền sửa.</span>
         <div class="foot-right">
           <button class="btn btn-ghost" type="button" data-leave-current="${esc(owner)}|${esc(projectId)}">Rời dự án</button>
           <button class="btn btn-ghost" type="button" data-shared-refresh>${icon("refresh")} Làm mới</button>
@@ -949,7 +1004,9 @@
     if (!overlay) return;
     const body = overlay.querySelector("[data-shared-body]");
     const sub = overlay.querySelector("[data-shared-sub]");
+    const footnote = overlay.querySelector("[data-shared-footnote]");
     const load = async () => {
+      A._sharedCtx = null;
       body.innerHTML = `<div class="lic-empty">${icon("refresh")}<span>Đang tải…</span></div>`;
       try {
         const data = await apiJson(`/api/project/view?owner=${encodeURIComponent(owner)}&projectId=${encodeURIComponent(projectId)}`);
@@ -957,7 +1014,15 @@
           A.setJoinedStatus(owner, projectId, "joined");
           A.render({ animate: false });
         }
+        A._sharedCtx = { owner, projectId, data };
         sub.textContent = `Trưởng dự án: ${data.owner.name} · cập nhật ${A.timeAgo(data.updatedAt)}`;
+        if (footnote) {
+          footnote.textContent = data.me && data.me.assigner
+            ? "Bạn là người giao việc — không quản lý thành viên hay đóng dự án."
+            : data.me
+              ? "Bạn cập nhật trạng thái việc của mình; người giao việc chấm hoàn thành."
+              : "Chế độ chỉ xem.";
+        }
         body.innerHTML = sharedProjectBody(data);
       } catch (err) {
         sub.textContent = "Chưa tải được dự án";
@@ -1037,6 +1102,74 @@
       } catch (err) {
         if (submit) submit.disabled = false;
         A.toast(err.message || "Chưa gửi được yêu cầu.", "error");
+      }
+    });
+
+    body.addEventListener("submit", async (event) => {
+      const form = event.target.closest("[data-shared-create]");
+      if (!form) return;
+      event.preventDefault();
+      const ctx = A._sharedCtx;
+      if (!ctx) return;
+      const title = String(form.elements.title.value || "").trim();
+      if (!title) {
+        form.elements.title.focus();
+        return;
+      }
+      const submit = form.querySelector('button[type="submit"]');
+      if (submit) submit.disabled = true;
+      try {
+        await apiJson("/api/project/task", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            owner: ctx.owner,
+            projectId: ctx.projectId,
+            title,
+            assignee: form.elements.assignee.value || null,
+            due: form.elements.due.value || null,
+            priority: form.elements.priority.value || "med",
+          }),
+        });
+        A.toast(`Đã giao việc «${title}».`, "success");
+        const scroll = body.scrollTop;
+        await load();
+        body.scrollTop = scroll;
+      } catch (err) {
+        if (submit) submit.disabled = false;
+        A.toast(err.message || "Chưa giao được việc.", "error");
+      }
+    });
+
+    body.addEventListener("change", async (event) => {
+      const statusEl = event.target.closest("[data-shared-status]");
+      const assigneeEl = event.target.closest("[data-shared-assignee]");
+      if (!statusEl && !assigneeEl) return;
+      const ctx = A._sharedCtx;
+      if (!ctx) return;
+      const taskId = statusEl ? statusEl.dataset.sharedStatus : assigneeEl.dataset.sharedAssignee;
+      const el = statusEl || assigneeEl;
+      el.disabled = true;
+      try {
+        if (statusEl) {
+          await apiJson("/api/project/status", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ owner: ctx.owner, projectId: ctx.projectId, taskId, status: statusEl.value }),
+          });
+        } else {
+          await apiJson("/api/project/task", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ owner: ctx.owner, projectId: ctx.projectId, taskId, assignee: assigneeEl.value || null }),
+          });
+        }
+        const scroll = body.scrollTop;
+        await load();
+        body.scrollTop = scroll;
+      } catch (err) {
+        el.disabled = false;
+        A.toast(err.message || "Chưa cập nhật được.", "error");
       }
     });
     load();
@@ -1462,10 +1595,17 @@
       (data.projects || []).forEach((p) => {
         const existing = local.find((x) => x.owner === p.owner && x.projectId === p.projectId);
         if (existing) {
-          if (existing.status === "pending") {
-            A.setJoinedStatus(p.owner, p.projectId, "joined");
-            approved.push(p);
-          }
+          const wasPending = existing.status === "pending";
+          A.addJoinedProject({
+            owner: p.owner,
+            ownerName: p.ownerName,
+            projectId: p.projectId,
+            projectName: p.projectName,
+            status: wasPending ? "joined" : existing.status,
+            joinedAt: p.joinedAt,
+            assigner: Boolean(p.assigner),
+          });
+          if (wasPending) approved.push(p);
         } else {
           A.addJoinedProject({
             owner: p.owner,
@@ -1474,6 +1614,7 @@
             projectName: p.projectName,
             status: "joined",
             joinedAt: p.joinedAt,
+            assigner: Boolean(p.assigner),
           });
         }
       });
@@ -1583,12 +1724,16 @@
         : license.expired
           ? `Đã hết hạn ${licenseDate(license.expiresAt)}`
           : `Còn ${days} ngày · đến ${licenseDate(license.expiresAt)}`;
-    const projects = (user.projects || []).map((p) => `<span class="um-chip">${esc(p.name)}</span>`).join("");
+    const projects = (user.projects || []).map((p) => `<span class="um-chip${(user.assignerProjects || []).includes(p.id) ? " is-role" : ""}">${esc(p.name)}</span>`).join("");
     const seen = user.lastSeen ? A.timeAgo(user.lastSeen) : "vừa tham gia";
     const request = user.request;
     const requestLine = request
       ? `<div class="um-req-line">${icon("bell")} Xin gia hạn${request.projectName ? ` “${esc(request.projectName)}”` : ""} · ${esc(A.timeAgo(request.createdAt))}${request.note ? ` · “${esc(request.note)}”` : ""}</div>`
       : "";
+    const roleButtons = (user.projects || []).map((p) => {
+      const on = (user.assignerProjects || []).includes(p.id);
+      return `<button class="um-role-toggle${on ? " on" : ""}" type="button" data-um-assigner="${esc(user.email)}" data-project="${esc(p.id)}" data-on="${on ? 1 : 0}" title="${on ? "Bãi miễn người giao việc" : "Bổ nhiệm người giao việc"}">${icon(on ? "check" : "plus")} ${on ? "Đang giao việc" : "Bổ nhiệm giao việc"} · ${esc(p.name)}</button>`;
+    }).join("");
     return `<div class="lic-row">
       <span class="lic-state ${state === "none" ? "" : state}" aria-hidden="true"></span>
       <div class="lic-main">
@@ -1597,6 +1742,7 @@
         <em class="${state}">${esc(status)}</em>
         ${requestLine}
         <div class="um-chips">${projects}</div>
+        ${roleButtons ? `<div class="um-roles"><span class="um-roles-label">${icon("send")} Người giao việc</span>${roleButtons}</div>` : ""}
       </div>
       <div class="lic-acts">
         <select class="select lic-days" data-lic-days="${esc(user.email)}" aria-label="Thời hạn cấp thêm">
@@ -1667,7 +1813,7 @@
       </div>
       <div class="modal-body">
         ${pendingSection}${reqSection}${body}
-        <div class="settings-note" style="margin-top:14px">${icon("alert")}<span>Bạn là trưởng dự án: xác nhận người xin tham gia kèm vai trò và năng lực, cấp hoặc gia hạn thời gian xem, khoá khi cần và gỡ người khỏi danh sách. Thành viên bị khoá có thể gửi yêu cầu gia hạn ngay trong dự án.</span></div>
+        <div class="settings-note" style="margin-top:14px">${icon("alert")}<span>Bạn là trưởng dự án: xác nhận người xin tham gia kèm vai trò và năng lực, cấp hoặc gia hạn thời gian xem, khoá khi cần và gỡ người khỏi danh sách. Có thể bổ nhiệm nhiều người giao việc cho từng dự án — họ được giao việc và chấm hoàn thành thay bạn, nhưng không quản lý thành viên hay đóng dự án.</span></div>
       </div>
       <div class="modal-foot">
         <span class="foot-note">Múi giờ tính theo thiết bị này.</span>
@@ -1790,6 +1936,34 @@
           await loadUsers(overlay);
         } catch (err) {
           A.toast(err.message, "error");
+        }
+      });
+    });
+
+    overlay.querySelectorAll("[data-um-assigner]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const email = btn.dataset.umAssigner;
+        const projectId = btn.dataset.project;
+        const enabled = btn.dataset.on !== "1";
+        btn.disabled = true;
+        try {
+          const known = A.members().find((m) => m.email && m.email === email);
+          const data = await apiJson("/api/projects/assigner", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ email, projectId, enabled, memberId: known ? known.id : "" }),
+          });
+          const member = data.member || {};
+          A.addMemberFromJoin({ id: member.memberId, email, name: member.name, role: member.role, capacity: member.capacity });
+          A.render({ animate: false });
+          A.toast(
+            enabled ? `Đã bổ nhiệm ${member.name || email} làm người giao việc.` : `Đã bãi miễn quyền giao việc của ${member.name || email}.`,
+            enabled ? "success" : "info"
+          );
+          await loadUsers(overlay);
+        } catch (err) {
+          btn.disabled = false;
+          A.toast(err.message || "Chưa đổi được quyền giao việc.", "error");
         }
       });
     });
@@ -2134,6 +2308,10 @@
     const inviteMemberBtn = event.target.closest("[data-invite-member]");
     if (inviteMemberBtn) {
       openInvite(A.DATA.settings.activeProjectId, inviteMemberBtn.dataset.inviteMember);
+      return;
+    }
+    if (event.target.closest("[data-manage-members]")) {
+      A.openUserManager();
       return;
     }
     if (event.target.closest("[data-add-project]")) {
@@ -2715,6 +2893,14 @@
   /* ============================================================
      KHỞI ĐỘNG
      ============================================================ */
+  A.onBoardPulled = function () {
+    A.render({ animate: false });
+    A.updateShell();
+    if (!A._overlays || !A._overlays.length) {
+      A.toast("Đội dự án vừa cập nhật bảng việc.", "info");
+    }
+  };
+
   function init() {
     A.applyTheme(A.DATA.settings.theme);
     setupPWA();
@@ -2725,21 +2911,25 @@
     A.route();
     A.refreshLeadRequests();
     A.syncJoinedProjects();
+    A.pullBoard();
     window.addEventListener("guong:account", () => {
       window.setTimeout(() => {
         A.refreshLeadRequests();
         A.syncJoinedProjects();
+        A.pullBoard();
       }, 500);
     });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState !== "visible" || !A.account) return;
       A.refreshLeadRequests();
       A.syncJoinedProjects();
+      A.pullBoard();
     });
     window.setInterval(() => {
       if (document.visibilityState !== "visible" || !A.account) return;
       A.refreshLeadRequests();
       A.syncJoinedProjects();
+      A.pullBoard();
     }, 60000);
     window.addEventListener("beforeunload", () => A.save());
   }
