@@ -298,9 +298,21 @@ type MemberRecord = {
   name: string;
   picture?: string;
   owner: string;
+  memberId?: string;
+  role?: string;
+  capacity?: number;
   projects: { id: string; name: string }[];
   joinedAt: string;
   lastSeen: string;
+};
+
+type PendingJoin = {
+  email: string;
+  name: string;
+  picture?: string;
+  owner: string;
+  projects: { id: string; name: string; requestedAt: string }[];
+  requestedAt: string;
 };
 
 type RequestRecord = {
@@ -327,6 +339,10 @@ const joinPrefix = (email: string) => `join:${email}:`;
 const licKey = (owner: string, email: string) => `lic:${owner}:${email}`;
 const requestKey = (owner: string, email: string) => `req:${owner}:${email}`;
 const requestPrefix = (owner: string) => `req:${owner}:`;
+const pendingKey = (owner: string, email: string) => `pend:${owner}:${email}`;
+const pendingPrefix = (owner: string) => `pend:${owner}:`;
+const joinReqKey = (email: string, owner: string, projectId: string) => `joinreq:${email}:${owner}:${projectId}`;
+const joinReqPrefix = (email: string) => `joinreq:${email}:`;
 
 async function readJson<T>(env: Env, key: string): Promise<T | null> {
   const raw = await env.SYNC_KV.get(key);
@@ -774,29 +790,50 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     if (record.owner === user.email) return json({ ok: false, error: "Đây là dự án của chính bạn." }, 400);
     const now = new Date().toISOString();
     const existing = await findMember(env, record.owner, user.email);
-    const projects = (existing?.projects || []).filter((p) => p.id !== record.projectId);
-    projects.push({ id: record.projectId, name: record.name });
-    const member: MemberRecord = {
+    if (existing && existing.projects.some((p) => p.id === record.projectId)) {
+      return json({
+        ok: true,
+        status: "member",
+        owner: record.owner,
+        ownerName: record.ownerName,
+        project: { id: record.projectId, name: record.name },
+      });
+    }
+    const pending: PendingJoin = (await readJson<PendingJoin>(env, pendingKey(record.owner, user.email))) || {
       email: user.email,
       name: user.name || user.email,
       picture: user.picture || "",
       owner: record.owner,
-      projects,
-      joinedAt: existing?.joinedAt || now,
-      lastSeen: now,
+      projects: [],
+      requestedAt: now,
     };
-    await env.SYNC_KV.put(memberKey(record.owner, user.email), JSON.stringify(member));
+    pending.name = user.name || pending.name;
+    pending.picture = user.picture || pending.picture;
+    if (pending.projects.some((p) => p.id === record.projectId)) {
+      pending.projects = pending.projects.map((p) => (p.id === record.projectId ? { ...p, name: record.name } : p));
+    } else {
+      pending.projects.push({ id: record.projectId, name: record.name, requestedAt: now });
+    }
+    await env.SYNC_KV.put(pendingKey(record.owner, user.email), JSON.stringify(pending));
     await env.SYNC_KV.put(
-      joinKey(user.email, record.owner, record.projectId),
+      joinReqKey(user.email, record.owner, record.projectId),
       JSON.stringify({
         owner: record.owner,
         ownerName: record.ownerName,
         projectId: record.projectId,
         projectName: record.name,
-        joinedAt: now,
+        status: "pending",
+        requestedAt: now,
       })
     );
-    return json({ ok: true, owner: record.owner, ownerName: record.ownerName, project: { id: record.projectId, name: record.name } });
+    return json({
+      ok: true,
+      status: "pending",
+      owner: record.owner,
+      ownerName: record.ownerName,
+      project: { id: record.projectId, name: record.name },
+      requestedAt: now,
+    });
   }
 
   if (path === "/api/projects/joined" && request.method === "GET") {
@@ -804,7 +841,13 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
     const list = await env.SYNC_KV.list({ prefix: joinPrefix(user.email) });
     const items = await Promise.all(list.keys.map((k) => readJson<any>(env, k.name)));
-    return json({ ok: true, projects: items.filter(Boolean) });
+    const waiting = await env.SYNC_KV.list({ prefix: joinReqPrefix(user.email) });
+    const pendingItems = await Promise.all(waiting.keys.map((k) => readJson<any>(env, k.name)));
+    return json({
+      ok: true,
+      projects: items.filter(Boolean),
+      pending: pendingItems.filter((item) => item && item.status === "pending"),
+    });
   }
 
   if (path === "/api/project/view" && request.method === "GET") {
@@ -816,6 +859,18 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const isOwner = owner === user.email;
     const member = isOwner ? null : await findMember(env, owner, user.email);
     if (!isOwner && (!member || !member.projects.some((p) => p.id === projectId))) {
+      const pending = await readJson<PendingJoin>(env, pendingKey(owner, user.email));
+      if (pending && pending.projects.some((p) => p.id === projectId)) {
+        return json(
+          {
+            ok: false,
+            code: "join_pending",
+            error: "Yêu cầu tham gia đang chờ trưởng dự án xác nhận.",
+            requestedAt: (pending.projects.find((p) => p.id === projectId) || {}).requestedAt || pending.requestedAt,
+          },
+          403
+        );
+      }
       return json({ ok: false, error: "Bạn chưa tham gia dự án này." }, 403);
     }
     const license = isOwner ? null : licenseFor(await readJson<any>(env, licKey(owner, user.email)));
@@ -841,12 +896,14 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       member.lastSeen = new Date().toISOString();
       await env.SYNC_KV.put(memberKey(owner, user.email), JSON.stringify(member));
     }
+    const self = member && member.memberId ? { id: member.memberId, role: member.role || "", capacity: member.capacity || 8 } : null;
     return json({
       ok: true,
       owner: { email: owner, name: codeRecord?.ownerName || owner },
       project,
       tasks: board.tasks.filter((t) => t.projectId === projectId),
       members: board.members,
+      me: self,
       license,
       updatedAt: board.updatedAt,
     });
@@ -859,7 +916,17 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     const projectId = clip(url.searchParams.get("projectId"), 40);
     if (!owner || !projectId) return json({ ok: false, error: "Thiếu thông tin dự án." }, 400);
     await env.SYNC_KV.delete(joinKey(user.email, owner, projectId));
+    await env.SYNC_KV.delete(joinReqKey(user.email, owner, projectId));
     await env.SYNC_KV.delete(requestKey(owner, user.email));
+    const pending = await readJson<PendingJoin>(env, pendingKey(owner, user.email));
+    if (pending) {
+      pending.projects = pending.projects.filter((p) => p.id !== projectId);
+      if (pending.projects.length) {
+        await env.SYNC_KV.put(pendingKey(owner, user.email), JSON.stringify(pending));
+      } else {
+        await env.SYNC_KV.delete(pendingKey(owner, user.email));
+      }
+    }
     const member = await findMember(env, owner, user.email);
     if (member) {
       member.projects = member.projects.filter((p) => p.id !== projectId);
@@ -920,6 +987,77 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({ ok: true });
   }
 
+  if (path === "/api/projects/pending" && request.method === "GET") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const list = await env.SYNC_KV.list({ prefix: pendingPrefix(user.email) });
+    const joins = (await Promise.all(list.keys.map((k) => readJson<PendingJoin>(env, k.name)))).filter(Boolean) as PendingJoin[];
+    joins.sort((a, b) => String(b.requestedAt).localeCompare(String(a.requestedAt)));
+    return json({ ok: true, joins });
+  }
+
+  if (path === "/api/projects/pending" && request.method === "POST") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const body: any = await request.json().catch(() => ({}));
+    const email = cleanEmail(body?.email);
+    if (!email) return json({ ok: false, error: "Thiếu email người xin tham gia." }, 400);
+    const pending = await readJson<PendingJoin>(env, pendingKey(user.email, email));
+    if (!pending) return json({ ok: false, error: "Lời mời này không còn chờ duyệt." }, 404);
+    const role = clip(body?.role, 60).trim() || "Thành viên";
+    const capacityRaw = Number(body?.capacity);
+    const capacity = Number.isFinite(capacityRaw) ? Math.max(1, Math.min(40, Math.round(capacityRaw))) : 8;
+    const memberId = clip(body?.memberId, 40).replace(/[^A-Za-z0-9_-]/g, "");
+    const now = new Date().toISOString();
+    const existing = await findMember(env, user.email, email);
+    const projects = new Map<string, { id: string; name: string }>();
+    (existing?.projects || []).forEach((p) => projects.set(p.id, p));
+    pending.projects.forEach((p) => projects.set(p.id, { id: p.id, name: p.name }));
+    const member: MemberRecord = {
+      email,
+      name: pending.name || existing?.name || email,
+      picture: pending.picture || existing?.picture || "",
+      owner: user.email,
+      memberId: memberId || existing?.memberId || "",
+      role,
+      capacity,
+      projects: Array.from(projects.values()),
+      joinedAt: existing?.joinedAt || now,
+      lastSeen: now,
+    };
+    await env.SYNC_KV.put(memberKey(user.email, email), JSON.stringify(member));
+    for (const project of pending.projects) {
+      await env.SYNC_KV.put(
+        joinKey(email, user.email, project.id),
+        JSON.stringify({
+          owner: user.email,
+          ownerName: user.name || user.email,
+          projectId: project.id,
+          projectName: project.name,
+          joinedAt: now,
+        })
+      );
+      await env.SYNC_KV.delete(joinReqKey(email, user.email, project.id));
+    }
+    await env.SYNC_KV.delete(pendingKey(user.email, email));
+    return json({ ok: true, member });
+  }
+
+  if (path === "/api/projects/pending" && request.method === "DELETE") {
+    const user = await readUser(request, env);
+    if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const email = cleanEmail(url.searchParams.get("email"));
+    if (!email) return json({ ok: false, error: "Thiếu email." }, 400);
+    const pending = await readJson<PendingJoin>(env, pendingKey(user.email, email));
+    if (pending) {
+      for (const project of pending.projects) {
+        await env.SYNC_KV.delete(joinReqKey(email, user.email, project.id));
+      }
+    }
+    await env.SYNC_KV.delete(pendingKey(user.email, email));
+    return json({ ok: true });
+  }
+
   if (path === "/api/users" && request.method === "GET") {
     const user = await readUser(request, env);
     if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
@@ -933,7 +1071,10 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       }))
     );
     users.sort((a, b) => String(b.joinedAt).localeCompare(String(a.joinedAt)));
-    return json({ ok: true, users });
+    const pendingList = await env.SYNC_KV.list({ prefix: pendingPrefix(user.email) });
+    const pending = (await Promise.all(pendingList.keys.map((k) => readJson<PendingJoin>(env, k.name)))).filter(Boolean) as PendingJoin[];
+    pending.sort((a, b) => String(b.requestedAt).localeCompare(String(a.requestedAt)));
+    return json({ ok: true, users, pending });
   }
 
   if (path === "/api/users/license" && request.method === "POST") {
@@ -995,10 +1136,16 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     await env.SYNC_KV.delete(memberKey(user.email, email));
     await env.SYNC_KV.delete(licKey(user.email, email));
     await env.SYNC_KV.delete(requestKey(user.email, email));
+    await env.SYNC_KV.delete(pendingKey(user.email, email));
     const list = await env.SYNC_KV.list({ prefix: joinPrefix(email) });
     const ownedPrefix = `${joinPrefix(email)}${user.email}:`;
     for (const key of list.keys) {
       if (key.name.startsWith(ownedPrefix)) await env.SYNC_KV.delete(key.name);
+    }
+    const waiting = await env.SYNC_KV.list({ prefix: joinReqPrefix(email) });
+    const waitingPrefix = `${joinReqPrefix(email)}${user.email}:`;
+    for (const key of waiting.keys) {
+      if (key.name.startsWith(waitingPrefix)) await env.SYNC_KV.delete(key.name);
     }
     return json({ ok: true });
   }

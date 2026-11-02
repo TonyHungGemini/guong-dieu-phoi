@@ -859,20 +859,20 @@
           <label class="f-label" for="joinCode">Mã dự án</label>
           <input class="input" id="joinCode" name="code" placeholder="G-ABC123" maxlength="20" autocomplete="off" required>
         </div>
-        <div class="settings-note" style="margin-top:12px">${icon("spark")}<span>Sau khi tham gia, dự án nằm ở mục “Dự án đang theo dõi”. Bạn xem được bảng việc của chủ dự án; phần sửa vẫn thuộc về họ.</span></div>
+        <div class="settings-note" style="margin-top:12px">${icon("spark")}<span>Trưởng dự án nhận thông báo và xác nhận bạn vào dự án. Khi được duyệt, dự án nằm ở mục “Dự án đang theo dõi”; bạn xem được bảng việc, phần sửa vẫn thuộc về họ.</span></div>
       </div>
       <div class="modal-foot">
         <span class="foot-note">Mã dùng một lần cho mỗi tài khoản Google.</span>
         <div class="foot-right">
           <button class="btn btn-ghost" type="button" data-close-overlay>Đóng</button>
-          <button class="btn btn-accent" type="submit">${icon("arrow-right")} Tham gia</button>
+          <button class="btn btn-accent" type="submit">${icon("send")} Gửi yêu cầu tham gia</button>
         </div>
       </div>
     </form>`;
     A.openOverlay(html, { focus: "#joinCode" });
   }
 
-  function sharedTaskRow(task, memberName) {
+  function sharedTaskRow(task, memberName, mine) {
     const status = A.STATUS[task.status] ? A.STATUS[task.status].label : task.status;
     const late = task.status !== "done" && task.due && task.due < A.todayISO();
     const due = task.status === "done"
@@ -880,10 +880,10 @@
       : task.due
         ? `${late ? "Quá hạn " : "Hạn "}${A.fmtShort(task.due)}`
         : "Chưa hẹn";
-    return `<div class="shared-row${task.status === "done" ? " is-done" : ""}">
+    return `<div class="shared-row${task.status === "done" ? " is-done" : ""}${mine ? " is-mine" : ""}">
       <div class="shared-main">
         <strong>${esc(task.title)}</strong>
-        <span>${esc(memberName)} · ${esc(due)}</span>
+        <span>${esc(memberName)} · ${esc(due)}${mine ? " · Bạn" : ""}</span>
       </div>
       <span class="shared-status s-${esc(task.status)}${late ? " is-late" : ""}">${esc(status)}</span>
     </div>`;
@@ -892,6 +892,7 @@
   function sharedProjectBody(data) {
     const tasks = data.tasks || [];
     const members = data.members || [];
+    const mine = data.me ? data.me.id : "";
     const done = tasks.filter((t) => t.status === "done").length;
     const overdue = tasks.filter((t) => t.status !== "done" && t.due && t.due < A.todayISO()).length;
     const nameOf = (id) => (members.find((m) => m.id === id) || {}).name || "Chưa giao";
@@ -904,15 +905,19 @@
     const licenseNote = data.license
       ? `Bạn xem dự án này ${data.license.expired ? "đã hết hạn" : `còn ${data.license.daysLeft} ngày`}.`
       : "Trưởng dự án chưa đặt thời hạn cho bạn.";
+    const roleNote = data.me && data.me.role
+      ? `Vai trò của bạn: ${data.me.role} · năng lực ${data.me.capacity} việc/tuần. `
+      : "";
+    const mineCount = mine ? tasks.filter((t) => t.assignee === mine).length : 0;
     return `<div class="shared-stats">
         <div class="shared-stat"><b>${tasks.length}</b><span>việc</span></div>
         <div class="shared-stat"><b>${tasks.length - done}</b><span>đang mở</span></div>
         <div class="shared-stat${overdue ? " is-late" : ""}"><b>${overdue}</b><span>quá hạn</span></div>
-        <div class="shared-stat"><b>${members.length}</b><span>thành viên</span></div>
+        <div class="shared-stat${mine ? " is-mine" : ""}"><b>${mine ? mineCount : members.length}</b><span>${mine ? "việc của bạn" : "thành viên"}</span></div>
       </div>
-      <div class="settings-note" style="margin-top:12px">${icon("alert")}<span>${esc(licenseNote)}</span></div>
+      <div class="settings-note" style="margin-top:12px">${icon("alert")}<span>${esc(roleNote + licenseNote)}</span></div>
       ${sorted.length
-        ? `<div class="shared-list">${sorted.map((task) => sharedTaskRow(task, nameOf(task.assignee))).join("")}</div>`
+        ? `<div class="shared-list">${sorted.map((task) => sharedTaskRow(task, nameOf(task.assignee), mine && task.assignee === mine)).join("")}</div>`
         : `<div class="lic-empty">${icon("layers")}<span>Dự án chưa có việc nào.</span></div>`}`;
   }
 
@@ -948,38 +953,55 @@
       body.innerHTML = `<div class="lic-empty">${icon("refresh")}<span>Đang tải…</span></div>`;
       try {
         const data = await apiJson(`/api/project/view?owner=${encodeURIComponent(owner)}&projectId=${encodeURIComponent(projectId)}`);
+        if (entry && entry.status !== "joined") {
+          A.setJoinedStatus(owner, projectId, "joined");
+          A.render({ animate: false });
+        }
         sub.textContent = `Trưởng dự án: ${data.owner.name} · cập nhật ${A.timeAgo(data.updatedAt)}`;
         body.innerHTML = sharedProjectBody(data);
       } catch (err) {
         sub.textContent = "Chưa tải được dự án";
+        const joinPending = err.data && err.data.code === "join_pending";
         const expired = err.data && err.data.code === "license_expired";
         const locked = expired && err.data.license && err.data.license.plan === "locked";
-        const removed = err.status === 403 && !expired;
-        const message = expired
-          ? locked
-            ? "Trưởng dự án đã tạm khoá quyền xem của bạn. Gửi yêu cầu để được mở lại."
-            : "Thời hạn xem dự án đã hết. Gửi yêu cầu để trưởng dự án gia hạn."
-          : removed
-            ? "Bạn không còn trong danh sách thành viên. Xin mã tham gia mới từ trưởng dự án để xem lại."
-            : err.status === 404
-              ? "Trưởng dự án chưa đồng bộ bảng việc, hoặc dự án đã đổi mã."
-              : err.message;
+        const removed = err.status === 403 && !expired && !joinPending;
+        const message = joinPending
+          ? "Yêu cầu tham gia đã gửi tới trưởng dự án. Khi họ xác nhận, vai trò và việc được giao sẽ hiện ở đây."
+          : expired
+            ? locked
+              ? "Trưởng dự án đã tạm khoá quyền xem của bạn. Gửi yêu cầu để được mở lại."
+              : "Thời hạn xem dự án đã hết. Gửi yêu cầu để trưởng dự án gia hạn."
+            : removed
+              ? "Bạn không còn trong danh sách thành viên. Xin mã tham gia mới từ trưởng dự án để xem lại."
+              : err.status === 404
+                ? "Trưởng dự án chưa đồng bộ bảng việc, hoặc dự án đã đổi mã."
+                : err.message;
         const pending = expired && err.data ? err.data.request : null;
-        const lockTitle = locked ? "Quyền xem đang bị tạm khoá" : expired ? "Quyền xem đã hết hạn" : removed ? "Không còn trong dự án" : "Chưa mở được dự án";
-        const lockIcon = locked ? "pause" : expired ? "clock" : removed ? "users" : "alert";
+        const lockTitle = joinPending
+          ? "Đang chờ trưởng dự án xác nhận"
+          : locked
+            ? "Quyền xem đang bị tạm khoá"
+            : expired
+              ? "Quyền xem đã hết hạn"
+              : removed
+                ? "Không còn trong dự án"
+                : "Chưa mở được dự án";
+        const lockIcon = joinPending ? "clock" : locked ? "pause" : expired ? "clock" : removed ? "users" : "alert";
         body.innerHTML = `<div class="shared-lock">
           <span class="shared-lock-ico">${icon(lockIcon)}</span>
           <strong>${esc(lockTitle)}</strong>
           <p>${esc(message)}</p>
-          ${pending
-            ? `<div class="shared-req-state">${icon("bell")} Đã gửi yêu cầu ${esc(A.timeAgo(pending.createdAt))} — chờ trưởng dự án phản hồi.</div>`
-            : expired
-              ? `<form class="shared-request" data-request-form data-owner="${esc(owner)}" data-project="${esc(projectId)}">
-                  <label class="f-label" for="requestNote">Lời nhắn cho trưởng dự án (không bắt buộc)</label>
-                  <textarea class="input" id="requestNote" name="note" rows="2" maxlength="240" placeholder="Ví dụ: em cần xem thêm 2 tuần để chốt báo cáo."></textarea>
-                  <button class="btn btn-accent" type="submit">${icon("bell")} Gửi yêu cầu gia hạn</button>
-                </form>`
-              : ""}
+          ${joinPending
+            ? `<div class="shared-req-state">${icon("clock")} Đã gửi ${esc(A.timeAgo(err.data.requestedAt))} — bấm “Làm mới” để kiểm tra.</div>`
+            : pending
+              ? `<div class="shared-req-state">${icon("bell")} Đã gửi yêu cầu ${esc(A.timeAgo(pending.createdAt))} — chờ trưởng dự án phản hồi.</div>`
+              : expired
+                ? `<form class="shared-request" data-request-form data-owner="${esc(owner)}" data-project="${esc(projectId)}">
+                    <label class="f-label" for="requestNote">Lời nhắn cho trưởng dự án (không bắt buộc)</label>
+                    <textarea class="input" id="requestNote" name="note" rows="2" maxlength="240" placeholder="Ví dụ: em cần xem thêm 2 tuần để chốt báo cáo."></textarea>
+                    <button class="btn btn-accent" type="submit">${icon("bell")} Gửi yêu cầu gia hạn</button>
+                  </form>`
+                : ""}
         </div>`;
       }
     };
@@ -1401,18 +1423,153 @@
   async function refreshLeadRequests() {
     if (!A.account || !A.account.email) {
       A.pendingRequests = 0;
+      A.pendingJoins = [];
       A.updateShell();
       return;
     }
     try {
-      const data = await apiJson("/api/projects/requests");
-      A.pendingRequests = (data.requests || []).length;
+      const [reqData, joinData] = await Promise.all([
+        apiJson("/api/projects/requests").catch(() => ({ requests: [] })),
+        apiJson("/api/projects/pending").catch(() => ({ joins: [] })),
+      ]);
+      const joins = joinData.joins || [];
+      const previous = Array.isArray(A.pendingJoins) ? A.pendingJoins : [];
+      const changed = joins.length !== previous.length;
+      A.pendingJoins = joins;
+      A.pendingRequests = (reqData.requests || []).length + joins.length;
+      A.updateShell();
+      if (!joins.length) {
+        A._joinsNotified = 0;
+      } else if (!A._joinsNotified || joins.length > A._joinsNotified) {
+        A._joinsNotified = joins.length;
+        A.toast(`${joins.length} người xin tham gia dự án — xác nhận ở trang Đội ngũ.`, "info");
+      }
+      if (changed && A.view === "team" && !A._overlays.length) A.render({ animate: false });
     } catch (err) {
       A.pendingRequests = 0;
+      A.pendingJoins = [];
+      A.updateShell();
     }
-    A.updateShell();
   }
   A.refreshLeadRequests = refreshLeadRequests;
+
+  async function syncJoinedProjects() {
+    if (!A.account || !A.account.email) return;
+    try {
+      const data = await apiJson("/api/projects/joined");
+      const local = A.joinedProjects().slice();
+      const approved = [];
+      (data.projects || []).forEach((p) => {
+        const existing = local.find((x) => x.owner === p.owner && x.projectId === p.projectId);
+        if (existing) {
+          if (existing.status === "pending") {
+            A.setJoinedStatus(p.owner, p.projectId, "joined");
+            approved.push(p);
+          }
+        } else {
+          A.addJoinedProject({
+            owner: p.owner,
+            ownerName: p.ownerName,
+            projectId: p.projectId,
+            projectName: p.projectName,
+            status: "joined",
+            joinedAt: p.joinedAt,
+          });
+        }
+      });
+      (data.pending || []).forEach((p) => {
+        A.addJoinedProject({
+          owner: p.owner,
+          ownerName: p.ownerName,
+          projectId: p.projectId,
+          projectName: p.projectName,
+          status: "pending",
+          requestedAt: p.requestedAt,
+        });
+      });
+      const waiting = new Set((data.pending || []).map((p) => `${p.owner}|${p.projectId}`));
+      local.forEach((item) => {
+        if (item.status !== "pending") return;
+        if (waiting.has(`${item.owner}|${item.projectId}`)) return;
+        if (approved.some((p) => p.owner === item.owner && p.projectId === item.projectId)) return;
+        A.setJoinedStatus(item.owner, item.projectId, "declined");
+      });
+      if (approved.length) {
+        A.toast(`Đã được duyệt vào “${approved[0].projectName}”${approved.length > 1 ? ` và ${approved.length - 1} dự án khác` : ""}.`, "success");
+        A.render({ animate: false });
+      }
+    } catch (err) {
+      /* offline — giữ trạng thái đang lưu trên máy */
+    }
+  }
+  A.syncJoinedProjects = syncJoinedProjects;
+
+  async function approveJoinRequest(btn) {
+    const card = btn.closest("[data-join-email]");
+    if (!card) return;
+    const email = card.dataset.joinEmail;
+    const join = (A.pendingJoins || []).find((j) => j.email === email) || {};
+    const roleInput = card.querySelector("[data-join-role]");
+    const capacityInput = card.querySelector("[data-join-capacity]");
+    const role = roleInput ? roleInput.value.trim().slice(0, 60) : "";
+    const capacity = capacityInput ? Math.max(1, Math.min(40, Math.round(Number(capacityInput.value) || 8))) : 8;
+    const known = A.members().find((m) => m.email && m.email === email);
+    const memberId = known ? known.id : A.uid("m");
+    const manager = btn.closest(".user-manager");
+    btn.disabled = true;
+    try {
+      const data = await apiJson("/api/projects/pending", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email, role, capacity, memberId }),
+      });
+      const name = (data.member && data.member.name) || join.name || email;
+      const member = A.addMemberFromJoin({ id: memberId, email, name, role: role || "Thành viên", capacity });
+      A.pendingJoins = (A.pendingJoins || []).filter((j) => j.email !== email);
+      A.pendingRequests = Math.max(0, Number(A.pendingRequests || 0) - 1);
+      A.updateShell();
+      if (manager) await loadUsers(manager);
+      else A.render({ animate: false });
+      A.toast(`Đã xác nhận ${name} · ${role || "Thành viên"} · ${capacity} việc/tuần.`, "success");
+      if (member) {
+        const memberName = member.name;
+        const memberId = member.id;
+        A.confirm({
+          title: `Đã thêm ${memberName} vào tổ`,
+          message: `Vai trò <b>${esc(role || member.role)}</b> · năng lực <b>${capacity} việc/tuần</b>. Giao việc đầu tiên cho ${esc(memberName)} ngay?`,
+          confirmLabel: "Giao việc ngay",
+          cancelLabel: "Để sau",
+          danger: false,
+        }, () => A.openTask(null, { assignee: memberId }));
+      }
+    } catch (err) {
+      btn.disabled = false;
+      A.toast(err.message || "Chưa xác nhận được người này.", "error");
+    }
+  }
+
+  async function declineJoinRequest(btn) {
+    const card = btn.closest("[data-join-email]");
+    if (!card) return;
+    const email = card.dataset.joinEmail;
+    const join = (A.pendingJoins || []).find((j) => j.email === email) || {};
+    const name = join.name || email;
+    if (!window.confirm(`Từ chối ${name} tham gia dự án? Họ có thể gửi lại mã nếu cần.`)) return;
+    const manager = btn.closest(".user-manager");
+    btn.disabled = true;
+    try {
+      await apiJson(`/api/projects/pending?email=${encodeURIComponent(email)}`, { method: "DELETE" });
+      A.pendingJoins = (A.pendingJoins || []).filter((j) => j.email !== email);
+      A.pendingRequests = Math.max(0, Number(A.pendingRequests || 0) - 1);
+      A.updateShell();
+      if (manager) await loadUsers(manager);
+      else A.render({ animate: false });
+      A.toast(`Đã từ chối ${name}.`, "info");
+    } catch (err) {
+      btn.disabled = false;
+      A.toast(err.message || "Chưa từ chối được.", "error");
+    }
+  }
 
   function userRow(user) {
     const license = user.license || null;
@@ -1474,6 +1631,7 @@
   function usersModalHtml(state) {
     const users = state.users || [];
     const requests = users.filter((u) => u.request);
+    const pending = state.pending || [];
     const active = users.filter((u) => !u.license || !u.license.expired).length;
     const owner = state.owner || "chưa đăng nhập";
     let body = "";
@@ -1486,6 +1644,12 @@
     } else {
       body = `<div class="lic-list">${users.map(userRow).join("")}</div>`;
     }
+    const pendingSection = pending.length
+      ? `<div class="um-requests um-joins">
+          <div class="um-req-title">${icon("users")} Chờ xác nhận tham gia <span>${pending.length}</span></div>
+          ${pending.map((join) => A.joinPendingCard(join)).join("")}
+        </div>`
+      : "";
     const reqSection = requests.length
       ? `<div class="um-requests">
           <div class="um-req-title">${icon("bell")} Yêu cầu gia hạn <span>${requests.length}</span></div>
@@ -1497,13 +1661,13 @@
         <div>
           <div class="modal-eyebrow">${icon("users")} QUẢN LÝ NGƯỜI DÙNG</div>
           <div class="modal-title" id="usersTitle">Người tham gia dự án</div>
-          <div class="modal-sub">${users.length} người · ${active} đang xem được${requests.length ? ` · ${requests.length} yêu cầu gia hạn` : ""} · ${esc(owner)}</div>
+          <div class="modal-sub">${users.length} người · ${active} đang xem được${requests.length ? ` · ${requests.length} yêu cầu gia hạn` : ""}${pending.length ? ` · ${pending.length} người xin tham gia` : ""} · ${esc(owner)}</div>
         </div>
         <button class="icon-btn modal-close" type="button" data-close-overlay aria-label="Đóng">${icon("x")}</button>
       </div>
       <div class="modal-body">
-        ${reqSection}${body}
-        <div class="settings-note" style="margin-top:14px">${icon("alert")}<span>Bạn là trưởng dự án: cấp hoặc gia hạn thời gian xem, khoá khi cần và gỡ người khỏi danh sách. Thành viên bị khoá có thể gửi yêu cầu gia hạn ngay trong dự án.</span></div>
+        ${pendingSection}${reqSection}${body}
+        <div class="settings-note" style="margin-top:14px">${icon("alert")}<span>Bạn là trưởng dự án: xác nhận người xin tham gia kèm vai trò và năng lực, cấp hoặc gia hạn thời gian xem, khoá khi cần và gỡ người khỏi danh sách. Thành viên bị khoá có thể gửi yêu cầu gia hạn ngay trong dự án.</span></div>
       </div>
       <div class="modal-foot">
         <span class="foot-note">Múi giờ tính theo thiết bị này.</span>
@@ -1522,9 +1686,11 @@
     try {
       const data = await apiJson("/api/users");
       const users = data.users || [];
-      A.pendingRequests = users.filter((u) => u.request).length;
+      const pending = data.pending || [];
+      A.pendingJoins = pending;
+      A.pendingRequests = users.filter((u) => u.request).length + pending.length;
       A.updateShell();
-      overlay.innerHTML = usersModalHtml({ users, owner });
+      overlay.innerHTML = usersModalHtml({ users, pending, owner });
     } catch (err) {
       overlay.innerHTML = usersModalHtml({
         error: err.status === 401 ? "Đăng nhập Google để xem người tham gia dự án của bạn." : err.message,
@@ -1940,6 +2106,21 @@
       return;
     }
 
+    if (event.target.closest("[data-refresh-joins]")) {
+      A.refreshLeadRequests();
+      A.toast("Đang làm mới danh sách người xin tham gia.", "info");
+      return;
+    }
+    const approveJoinBtn = event.target.closest("[data-join-approve]");
+    if (approveJoinBtn) {
+      approveJoinRequest(approveJoinBtn);
+      return;
+    }
+    const declineJoinBtn = event.target.closest("[data-join-decline]");
+    if (declineJoinBtn) {
+      declineJoinRequest(declineJoinBtn);
+      return;
+    }
     const addMemberBtn = event.target.closest("[data-add-member]");
     if (addMemberBtn) {
       openMember(null);
@@ -2323,16 +2504,24 @@
       if (submit) submit.disabled = true;
       joinProject(code)
         .then((data) => {
+          const pending = data.status === "pending";
           A.addJoinedProject({
             owner: data.owner,
             ownerName: data.ownerName,
             projectId: data.project.id,
             projectName: data.project.name,
+            status: pending ? "pending" : "joined",
+            requestedAt: data.requestedAt || new Date().toISOString(),
           });
           A.closeAllOverlays();
           A.render({ animate: false });
-          A.toast(`Đã tham gia “${data.project.name}”.`, "success");
-          openSharedProject(data.owner, data.project.id);
+          A.refreshLeadRequests();
+          if (pending) {
+            A.toast(`Đã gửi yêu cầu tham gia “${data.project.name}” — chờ trưởng dự án xác nhận.`, "info");
+          } else {
+            A.toast(`Bạn đã ở trong “${data.project.name}”.`, "success");
+            openSharedProject(data.owner, data.project.id);
+          }
         })
         .catch((err) => {
           if (submit) submit.disabled = false;
@@ -2535,9 +2724,23 @@
     }
     A.route();
     A.refreshLeadRequests();
+    A.syncJoinedProjects();
     window.addEventListener("guong:account", () => {
-      window.setTimeout(() => A.refreshLeadRequests(), 500);
+      window.setTimeout(() => {
+        A.refreshLeadRequests();
+        A.syncJoinedProjects();
+      }, 500);
     });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible" || !A.account) return;
+      A.refreshLeadRequests();
+      A.syncJoinedProjects();
+    });
+    window.setInterval(() => {
+      if (document.visibilityState !== "visible" || !A.account) return;
+      A.refreshLeadRequests();
+      A.syncJoinedProjects();
+    }, 60000);
     window.addEventListener("beforeunload", () => A.save());
   }
 

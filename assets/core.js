@@ -393,6 +393,8 @@
             ownerName: cleanText(item.ownerName, 80) || owner,
             projectId,
             projectName: cleanText(item.projectName, 80) || "Dự án được mời",
+            status: item.status === "pending" || item.status === "declined" ? item.status : "joined",
+            requestedAt: cleanStamp(item.requestedAt) || "",
             joinedAt: cleanStamp(item.joinedAt) || new Date().toISOString(),
           };
         }).filter(Boolean)
@@ -606,6 +608,8 @@
     if (existing) {
       existing.ownerName = entry.ownerName || existing.ownerName;
       existing.projectName = entry.projectName || existing.projectName;
+      existing.status = entry.status || existing.status || "joined";
+      if (entry.requestedAt) existing.requestedAt = entry.requestedAt;
       App.save();
       return existing;
     }
@@ -614,11 +618,55 @@
       ownerName: entry.ownerName || entry.owner,
       projectId: entry.projectId,
       projectName: entry.projectName || "Dự án được mời",
+      status: entry.status || "joined",
+      requestedAt: entry.requestedAt || "",
       joinedAt: entry.joinedAt || new Date().toISOString(),
     };
     list.push(item);
     App.save();
     return item;
+  };
+  App.setJoinedStatus = function (owner, projectId, status) {
+    const item = App.joinedProjects().find((x) => x.owner === owner && x.projectId === projectId);
+    if (!item || item.status === status) return null;
+    item.status = status;
+    App.save();
+    return item;
+  };
+  App.addMemberFromJoin = function (info) {
+    if (!info || !info.email) return null;
+    const email = cleanEmail(info.email);
+    if (!email) return null;
+    const role = cleanText(info.role, 60) || "Thành viên";
+    const capacity = clamp(Math.round(Number(info.capacity) || 8), 1, 40);
+    const existing = App.DATA.members.find((m) => m.email && m.email === email);
+    if (existing) {
+      existing.role = role;
+      existing.capacity = capacity;
+      existing.inviteStatus = "joined";
+      existing.invitedAt = existing.invitedAt || new Date().toISOString();
+      if (!existing.name && info.name) existing.name = cleanText(info.name, 60);
+      App.save();
+      return existing;
+    }
+    const name = cleanText(info.name, 60) || email;
+    let id = String(info.id || "").trim();
+    if (!/^[A-Za-z0-9_-]{3,40}$/.test(id) || App.DATA.members.some((m) => m.id === id)) id = uid("m");
+    const member = {
+      id,
+      name,
+      short: initials(name),
+      role,
+      color: colorFor("", App.DATA.members.length),
+      capacity,
+      email,
+      invitedAt: new Date().toISOString(),
+      inviteStatus: "joined",
+    };
+    App.DATA.members.push(member);
+    if (!App.meId()) App.DATA.settings.ownerId = member.id;
+    App.save();
+    return member;
   };
   App.removeJoinedProject = function (owner, projectId) {
     App.DATA.settings.joined = App.joinedProjects().filter((x) => !(x.owner === owner && x.projectId === projectId));
@@ -1481,10 +1529,16 @@
     });
     const teamBadge = document.querySelectorAll("#bnTeamBadge, #navTeamBadge");
     const pending = Number(App.pendingRequests) || 0;
+    const joins = Array.isArray(App.pendingJoins) ? App.pendingJoins.length : 0;
+    const renewals = Math.max(0, pending - joins);
+    const pendingLabel = [
+      renewals ? `${renewals} yêu cầu gia hạn` : "",
+      joins ? `${joins} người xin tham gia` : "",
+    ].filter(Boolean).join(" · ") || "Không có việc chờ bạn";
     teamBadge.forEach((badge) => {
       badge.textContent = String(pending);
       badge.hidden = pending === 0;
-      badge.title = `${pending} yêu cầu gia hạn đang chờ bạn`;
+      badge.title = pendingLabel;
     });
     const next = App.nextMilestone();
     const msTitle = document.getElementById("sideMsTitle");

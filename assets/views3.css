@@ -60,6 +60,39 @@
 }
 .proj-leave:hover { background: var(--accent-soft); color: var(--accent); }
 .proj-leave .ico { width: 13px; height: 13px; }
+.proj-card.is-pending { border-color: color-mix(in srgb, var(--warn) 46%, var(--line)); background: color-mix(in srgb, var(--warn-soft) 30%, var(--card-2)); }
+.proj-card.is-pending .proj-meta { color: var(--warn); font-weight: 650; }
+.proj-card.is-declined { opacity: 0.66; }
+.proj-card.is-declined .proj-meta { color: var(--danger); }
+
+/* ---------- duyệt người xin tham gia ---------- */
+.join-approvals { margin-bottom: 16px; border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); }
+.join-list { display: flex; flex-direction: column; }
+.join-card { display: flex; align-items: center; gap: 11px; padding: 11px 2px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.join-card:first-child { border-top: none; }
+.join-avatar { flex: none; }
+.join-main { flex: 1; min-width: 150px; display: flex; flex-direction: column; gap: 2px; }
+.join-main strong { font-size: 12px; font-weight: 750; }
+.join-main > span { font-size: 9.5px; color: var(--muted); }
+.join-fields { display: flex; align-items: flex-end; gap: 7px; flex: none; }
+.join-field { display: flex; flex-direction: column; gap: 3px; }
+.join-field span { font-size: 8px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.join-field .input { height: 32px; font-size: 10.5px; }
+.join-field:first-child .input { width: 140px; }
+.join-field:last-child .input { width: 88px; }
+.join-acts { display: flex; align-items: center; gap: 5px; flex: none; }
+.join-acts .btn { height: 32px; font-size: 9.5px; }
+.um-joins { border-color: color-mix(in srgb, var(--warn) 38%, var(--line)); background: color-mix(in srgb, var(--warn-soft) 32%, var(--card)); }
+.um-joins .um-req-title { color: var(--ink); }
+.um-joins .um-req-title span { background: var(--warn); }
+.um-joins .join-card { border-top-color: color-mix(in srgb, var(--warn) 22%, var(--line)); }
+@media (max-width: 720px) {
+  .join-card { align-items: flex-start; }
+  .join-fields { flex: 1 1 100%; }
+  .join-field { flex: 1; }
+  .join-field:first-child .input, .join-field:last-child .input { width: 100%; }
+  .join-acts { flex: 1 1 100%; justify-content: flex-end; }
+}
 
 /* ---------- dự án được mời (chỉ xem) ---------- */
 .shared-modal { max-width: 640px; }
@@ -77,6 +110,8 @@
   padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
 }
 .shared-row.is-done { opacity: 0.62; }
+.shared-row.is-mine { border-color: color-mix(in srgb, var(--accent) 34%, var(--line)); background: color-mix(in srgb, var(--accent-soft) 45%, var(--card)); }
+.shared-stat.is-mine b { color: var(--accent); }
 .shared-main { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
 .shared-main strong { font-size: 11.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shared-main span { font-size: 9.5px; color: var(--muted); }

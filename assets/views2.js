@@ -361,30 +361,80 @@
           <button class="proj-invite" type="button" data-invite-project="${esc(p.id)}">${icon("send")} Mời</button>
         </article>`).join("")}
       </div>
-      <p class="proj-note">${icon("alert")} Người nhận đăng nhập Google rồi nhập mã để xem bảng việc của dự án này. Thành viên chỉ xem; bạn cấp thời hạn và xử lý yêu cầu gia hạn ở “Người dùng &amp; thời hạn”.</p>
+      <p class="proj-note">${icon("alert")} Người nhận đăng nhập Google rồi nhập mã để gửi yêu cầu tham gia. Bạn xác nhận, chọn vai trò và năng lực cho họ ở khối “Người xin tham gia”; sau đó cấp thời hạn xem và xử lý gia hạn ở “Người dùng &amp; thời hạn”.</p>
+    </section>`;
+  }
+
+  function joinPendingCard(join) {
+    const email = String(join.email || "");
+    const known = A.members().find((m) => m.email && m.email === email);
+    const role = known ? known.role : "Thành viên";
+    const capacity = known ? known.capacity : 8;
+    const projects = (join.projects || []).map((p) => `<span class="um-chip">${esc(p.name)}</span>`).join("");
+    return `<article class="join-card" data-join-email="${esc(email)}">
+      <span class="avatar join-avatar" style="--who:${esc(known ? known.color : A.memberColors()[0])}">${esc((join.name || email).trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?")}</span>
+      <div class="join-main">
+        <strong>${esc(join.name || email)}</strong>
+        <span>${esc(email)} · xin tham gia ${esc(A.timeAgo(join.requestedAt))}</span>
+        <div class="um-chips">${projects}</div>
+      </div>
+      <div class="join-fields">
+        <label class="join-field"><span>Vai trò</span><input class="input" data-join-role value="${esc(role)}" maxlength="60" autocomplete="off" aria-label="Vai trò của ${esc(join.name || email)}"></label>
+        <label class="join-field"><span>Năng lực tuần</span><input class="input" data-join-capacity type="number" min="1" max="40" step="1" value="${capacity}" inputmode="numeric" aria-label="Năng lực tuần của ${esc(join.name || email)}"></label>
+      </div>
+      <div class="join-acts">
+        <button class="btn btn-accent btn-sm" type="button" data-join-approve="${esc(email)}">${icon("check")} Xác nhận</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-join-decline="${esc(email)}">Từ chối</button>
+      </div>
+    </article>`;
+  }
+  A.joinPendingCard = joinPendingCard;
+
+  function joinApprovals() {
+    const joins = (A.pendingJoins || []).filter(Boolean);
+    if (!joins.length) return "";
+    return `<section class="card join-approvals">
+      <div class="card-h">
+        <div>
+          <div class="card-t">${icon("bell")} ${joins.length} người xin tham gia <span class="done-head-num" style="background:var(--accent-soft);color:var(--accent)">${joins.length}</span></div>
+          <div class="card-sub">Chọn vai trò và năng lực rồi xác nhận — người đó vào tổ và nhận việc được ngay.</div>
+        </div>
+        <button class="btn btn-ghost btn-sm" type="button" data-refresh-joins>${icon("refresh")} Làm mới</button>
+      </div>
+      <div class="join-list">${joins.map(joinPendingCard).join("")}</div>
     </section>`;
   }
 
   function joinedProjects() {
     const items = A.joinedProjects();
     if (!items.length) return "";
+    const waiting = items.filter((x) => x.status === "pending").length;
     return `<section class="card team-projects joined-projects">
       <div class="card-h">
         <div>
           <div class="card-t"><span class="card-idx">01</span> Dự án đang theo dõi</div>
-          <div class="card-sub">Dự án của người khác mà bạn đã tham gia bằng mã.</div>
+          <div class="card-sub">Dự án của người khác mà bạn đã tham gia bằng mã.${waiting ? ` ${waiting} dự án đang chờ xác nhận.` : ""}</div>
         </div>
         <button class="btn btn-ghost btn-sm" type="button" data-join-project>${icon("plus")} Nhập mã khác</button>
       </div>
       <div class="proj-list">
-        ${items.map((item) => `<article class="proj-card">
-          <button class="proj-main" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}" title="Xem bảng việc của dự án">
+        ${items.map((item) => {
+          const pending = item.status === "pending";
+          const declined = item.status === "declined";
+          const meta = pending
+            ? `Trưởng dự án: ${item.ownerName} · chờ xác nhận${item.requestedAt ? ` · gửi ${A.timeAgo(item.requestedAt)}` : ""}`
+            : declined
+              ? `Trưởng dự án: ${item.ownerName} · chưa được chấp nhận`
+              : `Trưởng dự án: ${item.ownerName} · chỉ xem`;
+          return `<article class="proj-card${pending ? " is-pending" : ""}${declined ? " is-declined" : ""}">
+          <button class="proj-main" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}" title="${pending ? "Xem trạng thái yêu cầu" : "Xem bảng việc của dự án"}">
             <span class="proj-name">${esc(item.projectName)}</span>
-            <span class="proj-meta">Trưởng dự án: ${esc(item.ownerName)} · chỉ xem</span>
+            <span class="proj-meta">${esc(meta)}</span>
           </button>
-          <button class="proj-invite" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}">${icon("external")} Xem</button>
+          <button class="proj-invite" type="button" data-open-shared="${esc(item.owner)}|${esc(item.projectId)}">${icon(pending ? "clock" : "external")} ${pending ? "Trạng thái" : "Xem"}</button>
           <button class="proj-leave" type="button" data-leave-shared="${esc(item.owner)}|${esc(item.projectId)}" title="Bỏ theo dõi" aria-label="Bỏ theo dõi dự án ${esc(item.projectName)}">${icon("x")}</button>
-        </article>`).join("")}
+        </article>`;
+        }).join("")}
       </div>
     </section>`;
   }
@@ -410,7 +460,7 @@
         <span class="setup-dot">${num}</span>
         <div><b>${esc(title)}</b><small>${esc(text)}</small></div>
       </li>`;
-      return `${head}${projectStrip()}${joinedProjects()}<section class="card team-empty">
+      return `${head}${joinApprovals()}${projectStrip()}${joinedProjects()}<section class="card team-empty">
         <div class="te-main">
           <div class="setup-eyebrow">${icon("spark")} Bắt đầu</div>
           <h2 class="te-title">Bàn đã sẵn.<br><span>Thêm người vào tổ.</span></h2>
@@ -492,7 +542,7 @@
       </div>
     </section>` : "";
     const note = `<div class="team-foot-note">${icon("spark")} Tải = việc đang mở / năng lực tuần. Khi một người vượt 100%, hãy xem lại thứ tự ưu tiên trước khi giao thêm.</div>`;
-    return `${head}${summary}${projectStrip()}${joinedProjects()}${cards}${unassignedCard}${note}`;
+    return `${head}${joinApprovals()}${summary}${projectStrip()}${joinedProjects()}${cards}${unassignedCard}${note}`;
   };
 
   /* ============================================================
