@@ -23,6 +23,7 @@
 <link rel="stylesheet" href="assets/views2.css">
 <link rel="stylesheet" href="assets/views3.css">
 <link rel="stylesheet" href="assets/reports.css">
+<link rel="stylesheet" href="assets/notify.css">
 <link rel="stylesheet" href="assets/tour.css">
 <script>
 try{
@@ -176,6 +177,10 @@ try{
         <button class="btn btn-ghost btn-sm account-cta" id="accountCta" onclick="App.openAccount()">
           <svg class="ico"><use href="#i-users"/></svg><span>Đăng nhập</span>
         </button>
+        <button class="icon-btn notif-btn" id="notifBtn" type="button" onclick="App.openNotifications()" aria-label="Thông báo" title="Thông báo">
+          <svg class="ico"><use href="#i-bell"/></svg>
+          <span class="notif-badge" id="notifBadge" hidden>0</span>
+        </button>
         <button class="icon-btn" id="themeBtn" onclick="App.toggleTheme()" aria-label="Đổi giao diện sáng/tối" title="Đổi giao diện">
           <svg class="ico" id="themeIcon"><use href="#i-moon"/></svg>
         </button>
@@ -220,6 +225,7 @@ try{
 <script src="assets/views2.js" defer></script>
 <script src="assets/reports.js" defer></script>
 <script src="assets/actions.js" defer></script>
+<script src="assets/notify.js" defer></script>
 <script src="assets/tour.js" defer></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>

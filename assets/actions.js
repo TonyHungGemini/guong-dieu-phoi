@@ -1174,6 +1174,7 @@
     });
     load();
   }
+  A.openSharedProject = openSharedProject;
 
   async function leaveSharedProject(owner, projectId) {
     A.removeJoinedProject(owner, projectId);
@@ -1586,14 +1587,26 @@
   }
   A.refreshLeadRequests = refreshLeadRequests;
 
+  A.sharedAlerts = [];
   async function syncJoinedProjects() {
     if (!A.account || !A.account.email) return;
     try {
       const data = await apiJson("/api/projects/joined");
       const local = A.joinedProjects().slice();
       const approved = [];
+      const alerts = [];
       (data.projects || []).forEach((p) => {
         const existing = local.find((x) => x.owner === p.owner && x.projectId === p.projectId);
+        (p.alerts || []).forEach((task) => {
+          if (!task || !task.taskId) return;
+          alerts.push({
+            ...task,
+            owner: p.owner,
+            ownerName: p.ownerName,
+            projectId: p.projectId,
+            projectName: p.projectName,
+          });
+        });
         if (existing) {
           const wasPending = existing.status === "pending";
           A.addJoinedProject({
@@ -1639,6 +1652,8 @@
         A.toast(`Đã được duyệt vào “${approved[0].projectName}”${approved.length > 1 ? ` và ${approved.length - 1} dự án khác` : ""}.`, "success");
         A.render({ animate: false });
       }
+      A.sharedAlerts = alerts;
+      if (typeof A.refreshNotifications === "function") A.refreshNotifications();
     } catch (err) {
       /* offline — giữ trạng thái đang lưu trên máy */
     }

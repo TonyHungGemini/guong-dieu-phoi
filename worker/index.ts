@@ -976,10 +976,40 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     if (!user) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
     const list = await env.SYNC_KV.list({ prefix: joinPrefix(user.email) });
     const items = await Promise.all(list.keys.map((k) => readJson<any>(env, k.name)));
+    const boards = new Map<string, SharedBoard | null>();
+    const readBoard = async (owner: string) => {
+      if (!boards.has(owner)) boards.set(owner, await readJson<SharedBoard>(env, boardKey(owner)));
+      return boards.get(owner) || null;
+    };
     const projects = await Promise.all(
       items.filter(Boolean).map(async (item: any) => {
         const member = await readJson<MemberRecord>(env, memberKey(item.owner, user.email));
-        return { ...item, assigner: Boolean(member && (member.assignerProjects || []).includes(item.projectId)) };
+        const assigner = Boolean(member && (member.assignerProjects || []).includes(item.projectId));
+        // Chỉ gửi việc cần nhắc: việc của chính tôi, hoặc toàn bộ việc mở nếu tôi là người giao việc.
+        let alerts: any[] = [];
+        const board = member ? await readBoard(item.owner) : null;
+        if (board) {
+          const nameOf = new Map(board.members.map((m) => [m.id, m.name]));
+          const mineId = member?.memberId || "";
+          const open = board.tasks.filter((t) => t.projectId === item.projectId && t.status !== "done");
+          const pool = assigner ? open : open.filter((t) => mineId && t.assignee === mineId);
+          alerts = pool
+            .sort((a, b) => (a.due || "9999-12-31").localeCompare(b.due || "9999-12-31") || ts(b.updatedAt) - ts(a.updatedAt))
+            .slice(0, 80)
+            .map((t) => ({
+              taskId: t.id,
+              title: t.title,
+              status: t.status,
+              priority: t.priority,
+              due: t.due || "",
+              createdAt: t.createdAt || "",
+              updatedAt: t.updatedAt || "",
+              assignee: t.assignee || "",
+              assigneeName: nameOf.get(t.assignee || "") || "",
+              mine: Boolean(mineId && t.assignee === mineId),
+            }));
+        }
+        return { ...item, assigner, alerts };
       })
     );
     const waiting = await env.SYNC_KV.list({ prefix: joinReqPrefix(user.email) });

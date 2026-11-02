@@ -1,4 +1,4 @@
-const VERSION = "1.6.3";
+const VERSION = "1.7.0";
 const CACHE = `guong-${VERSION}`;
 const SHELL = [
   "./",
@@ -9,6 +9,7 @@ const SHELL = [
   "./assets/views2.css",
   "./assets/views3.css",
   "./assets/reports.css",
+  "./assets/notify.css",
   "./assets/tour.css",
   "./assets/data.js",
   "./assets/core.js",
@@ -16,6 +17,7 @@ const SHELL = [
   "./assets/views2.js",
   "./assets/reports.js",
   "./assets/actions.js",
+  "./assets/notify.js",
   "./assets/tour.js",
   "./assets/favicon.svg",
   "./assets/icon-192.png",

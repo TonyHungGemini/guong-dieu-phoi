@@ -1718,6 +1718,7 @@
     }
     const accountCta = document.getElementById("accountCta");
     if (accountCta) accountCta.hidden = Boolean(account);
+    if (typeof App.refreshNotifyBadge === "function") App.refreshNotifyBadge();
     syncThemeIcon();
     document.title = `${VIEW_LABEL[App.view] || "Tổng quan"} · GUỒNG — ${projectName}`;
   };
