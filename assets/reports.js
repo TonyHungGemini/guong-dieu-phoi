@@ -77,6 +77,7 @@
     notify: false,
     aiBusy: null,
     aiError: "",
+    dayStamp: "",
   };
 
   /* ---------- tiện ích ---------- */
@@ -134,6 +135,7 @@
     window.setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
   function downloadReportCsv(report) {
+    rollRecurringReports({ silent: true });
     const rows = [
       ["Tiêu đề", report.title || ""],
       ["Dự án", report.project || ""],
@@ -195,6 +197,71 @@
       out = shiftCycle(base, freq, step);
     }
     return out;
+  }
+
+  /* Số kỳ cần cộng để mốc báo cáo bắt kịp kỳ hiện tại (không vượt quá hôm nay). */
+  function periodSteps(baseIso, freq, today) {
+    if (!baseIso || !today || baseIso >= today) return 0;
+    const gap = A.diffDays(baseIso, today);
+    if (gap <= 0) return 0;
+    if (freq === "daily") return gap;
+    if (freq === "weekly") return Math.floor(gap / 7);
+    let steps = 0;
+    while (steps < 600 && shiftCycle(baseIso, freq, steps + 1) <= today) steps += 1;
+    return steps;
+  }
+
+  function rollReportToPeriod(report, today) {
+    const freq = report.frequency;
+    if (!freq || freq === "none") return "";
+    const base = report.date || "";
+    if (!base) return "";
+    const steps = periodSteps(base, freq, today);
+    if (steps <= 0) return "";
+    const next = shiftCycle(base, freq, steps);
+    const oldDue = report.dueDate || "";
+    report.date = next;
+    report.dueDate = oldDue ? shiftCycle(oldDue, freq, steps) : next;
+    report.updatedAt = new Date().toISOString();
+    logAction(report, "cycle", `Tự chuyển kỳ ${shortDate(base)} → ${shortDate(next)}`);
+    return next;
+  }
+
+  /* Báo cáo định kỳ tự bắt kịp ngày/tuần/tháng/năm hiện tại; báo cáo đã chốt chỉ
+     quay lại kỳ mới khi chuỗi chưa có báo cáo đang mở kế tiếp. */
+  function rollRecurringReports(options) {
+    const opts = options || {};
+    if (!R.loaded || !R.reports.length) return 0;
+    const today = A.todayISO();
+    R.dayStamp = today;
+    const openSeries = new Set();
+    R.reports.forEach((report) => {
+      if (!report.frequency || report.frequency === "none") return;
+      if (!isDone(report)) openSeries.add(report.seriesId || report.id);
+    });
+    let count = 0;
+    R.reports.forEach((report) => {
+      if (!report.frequency || report.frequency === "none") return;
+      const done = isDone(report);
+      if (done && openSeries.has(report.seriesId || report.id)) return;
+      const next = rollReportToPeriod(report, today);
+      if (!next) return;
+      if (done) {
+        report.status = "To-do";
+        report.lastProcessedDate = today;
+      }
+      count += 1;
+    });
+    if (!count) return 0;
+    R.reports = sortReports(R.reports);
+    broadcastReminders();
+    push().catch(() => {});
+    if (opts.silent) scheduleRefresh();
+    else refresh();
+    if (opts.notify) {
+      A.toast(`Đã tự chuyển ${count} báo cáo định kỳ sang kỳ mới.`, "success");
+    }
+    return count;
   }
 
   function refresh() {
@@ -608,23 +675,13 @@
   }
 
   function autoAdvance() {
-    const today = A.todayISO();
-    let changed = false;
-    R.reports.forEach((report) => {
-      if (!report.frequency || report.frequency === "none") return;
-      if (!isDone(report)) return;
-      if (report.lastProcessedDate === today) return;
-      const next = nextDueDate(report);
-      if (!next || next === (report.dueDate || report.date)) return;
-      report.date = next;
-      report.dueDate = next;
-      report.status = "To-do";
-      report.lastProcessedDate = today;
-      report.updatedAt = new Date().toISOString();
-      logAction(report, "cycle", `Chuyển kỳ mới ${shortDate(next)}`);
-      changed = true;
-    });
-    if (changed) push().catch(() => {});
+    return rollRecurringReports();
+  }
+
+  function touchDay() {
+    if (!R.loaded) return;
+    if (R.dayStamp === A.todayISO()) return;
+    rollRecurringReports({ notify: true });
   }
 
   /* ---------- thao tác 1 chạm: hoàn thành / gia hạn ---------- */
@@ -768,6 +825,7 @@
     A.toast(`${title} — ${body}`, "info");
   }
   function checkReminders() {
+    touchDay();
     if (!R.user || !R.reports.length) return;
     const now = new Date();
     const minutesNow = now.getHours() * 60 + now.getMinutes();
@@ -797,6 +855,10 @@
     if (R.timer) return;
     R.timer = window.setInterval(checkReminders, 60000);
     window.setTimeout(checkReminders, 1500);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") touchDay();
+    });
+    window.addEventListener("focus", touchDay);
   }
   async function enableReminders() {
     if (!("Notification" in window)) {
