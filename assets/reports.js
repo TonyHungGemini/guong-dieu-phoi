@@ -37,6 +37,7 @@
     ai: "Chấm điểm AI",
     cycle: "Chuyển kỳ",
     import: "Nhập dữ liệu",
+    excel: "Bảng tính Excel",
   };
   const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
@@ -361,15 +362,21 @@
   }
 
   /* ---------- kiểm tra sẵn sàng ---------- */
+  function isExcelFile(file) {
+    return Boolean(file && String(file.role || "").startsWith("excel-"));
+  }
+  function excelReady(report) {
+    return Boolean(report && report.excel && report.excel.templateId && report.excel.latestId);
+  }
   function reportFiles(report) {
     return (R.fileBlobs || [])
-      .filter((file) => file && file.reportId === report.id)
+      .filter((file) => file && file.reportId === report.id && !isExcelFile(file))
       .sort((a, b) => String(b.uploadedAt || "").localeCompare(String(a.uploadedAt || "")));
   }
   function readiness(report) {
     const issues = [];
     const files = reportFiles(report);
-    if (!files.length && !driveUrl(report)) {
+    if (!files.length && !driveUrl(report) && !excelReady(report)) {
       issues.push({ key: "file", label: "Chưa có tệp đính kèm", severity: "high", fix: "files" });
     }
     if (!String(report.notes || "").trim()) {
@@ -452,7 +459,7 @@
   function readinessParts(report) {
     const files = reportFiles(report);
     return [
-      { key: "file", label: "Tệp đính kèm", ok: Boolean(files.length || driveUrl(report)) },
+      { key: "file", label: "Tệp đính kèm", ok: Boolean(files.length || driveUrl(report) || excelReady(report)) },
       { key: "notes", label: "Nội dung", ok: Boolean(String(report.notes || "").trim()) },
       { key: "submit", label: "Link nộp", ok: Boolean(String(report.submissionUrl || "").trim()) },
       { key: "zalo", label: "SĐT Zalo duyệt", ok: Boolean(String(report.zaloPhone || "").trim()) },
@@ -1453,6 +1460,30 @@
     return `<div class="rp-root" id="rpRoot">${tabs}${renderVault()}</div>`;
   };
 
+  // Mô-đun Excel mẫu dùng chung dữ liệu báo cáo và kho tệp với kho báo cáo.
+  A.excelBridge = {
+    report: findReport,
+    save: saveReport,
+    log: logAction,
+    refresh,
+    refreshDetail,
+    addFile(meta) {
+      if (!meta || !meta.id) return;
+      R.fileBlobs = R.fileBlobs.filter((item) => item.id !== meta.id).concat(meta);
+    },
+    removeFile(id) {
+      R.fileBlobs = R.fileBlobs.filter((item) => item.id !== id);
+    },
+    fileFor(reportId, role) {
+      return (R.fileBlobs || []).find((file) => file && file.reportId === reportId && file.role === role) || null;
+    },
+    excelFiles(reportId) {
+      return (R.fileBlobs || []).filter(
+        (file) => file && file.reportId === reportId && String(file.role || "").startsWith("excel-")
+      );
+    },
+  };
+
   /* ---------- lọc tại chỗ ---------- */
   function applyFilter() {
     const q = A.norm(R.q).trim();
@@ -1640,6 +1671,7 @@
   const DETAIL_TABS = [
     { key: "content", label: "Nội dung", icon: "file" },
     { key: "files", label: "Tệp đính kèm", icon: "paperclip" },
+    { key: "excel", label: "Excel mẫu", icon: "grid" },
     { key: "schedule", label: "Lịch & quy trình", icon: "calendar" },
     { key: "ai", label: "Trợ lý AI", icon: "spark" },
     { key: "activity", label: "Hoạt động", icon: "history" },
@@ -1653,6 +1685,10 @@
     const body =
       tab === "files"
         ? detailFilesTab(report)
+        : tab === "excel"
+        ? typeof A.excelTab === "function"
+          ? A.excelTab(report)
+          : `<div class="rp-dr-empty">${A.icon("grid")}<span>Mô-đun Excel chưa tải xong. Đóng rồi mở lại phần chi tiết.</span></div>`
         : tab === "schedule"
         ? detailScheduleTab(report)
         : tab === "ai"
@@ -1915,6 +1951,11 @@
     if (files.length) {
       window.open(`/api/files/${encodeURIComponent(files[0].id)}`, "_blank", "noopener,noreferrer");
       A.toast(`Đang mở “${files[0].name}”.`, "info");
+      return;
+    }
+    if (excelReady(report)) {
+      window.open(`/api/files/${encodeURIComponent(report.excel.latestId)}?download=1`, "_blank", "noopener,noreferrer");
+      A.toast(`Đang mở “${report.excel.latestName || "bản Excel mới nhất"}”.`, "info");
       return;
     }
     const drive = driveUrl(report);

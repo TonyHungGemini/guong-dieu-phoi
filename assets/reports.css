@@ -1134,3 +1134,168 @@ body.sidebar-open .rp-bee { opacity: 0; pointer-events: none; transform: transla
   .rp-dr-title { font-size: 18px; }
   .rp-tl-time { display: none; }
 }
+
+/* ============================================================
+   Excel mẫu
+   ============================================================ */
+.xl-hero {
+  display: flex; align-items: center; gap: 13px; flex-wrap: wrap;
+  padding: 16px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: linear-gradient(135deg, var(--accent-soft), transparent 72%);
+}
+.xl-hero-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; flex: none; border-radius: 11px;
+  background: var(--card); color: var(--accent); border: 1px solid var(--line);
+}
+.xl-hero-ico .ico { width: 19px; height: 19px; }
+.xl-hero-main { flex: 1 1 230px; min-width: 0; }
+.xl-hero-main h4 { font-size: 15px; font-weight: 780; letter-spacing: -0.02em; }
+.xl-hero-main p { margin-top: 4px; font-size: 11.5px; line-height: 1.6; color: var(--ink-2); }
+.xl-hero-main code, .xl-guide code, .xl-hint code, .xl-empty-fields code {
+  padding: 1px 5px; border-radius: 5px; background: var(--card-2); color: var(--accent);
+  font-family: var(--mono); font-size: 10.5px;
+}
+.xl-guide { display: flex; flex-direction: column; gap: 8px; }
+.xl-guide > div {
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--card-2);
+}
+.xl-guide b {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 21px; height: 21px; flex: none; border-radius: 50%;
+  background: var(--accent); color: var(--paper); font-size: 10px; font-weight: 750;
+}
+.xl-guide span { font-size: 11.5px; line-height: 1.6; color: var(--ink-2); }
+.xl-note {
+  display: flex; align-items: flex-start; gap: 7px;
+  font-size: 10.5px; line-height: 1.55; color: var(--muted);
+}
+.xl-note .ico { width: 13px; height: 13px; flex: none; margin-top: 1px; color: var(--warn); }
+
+.xl-head {
+  display: flex; align-items: center; gap: 11px; flex-wrap: wrap;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--card-2);
+}
+.xl-head-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; flex: none; border-radius: 9px;
+  background: var(--card); color: var(--accent); border: 1px solid var(--line);
+}
+.xl-head-ico .ico { width: 17px; height: 17px; }
+.xl-head-main { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.xl-head-main strong {
+  font-size: 12.5px; font-weight: 750;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.xl-head-main span { font-size: 10px; color: var(--muted); }
+.xl-head-acts { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+
+.xl-label {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 9.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+}
+.xl-label > span { font-size: 9.5px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--muted); }
+
+.xl-builtins { display: flex; flex-direction: column; gap: 7px; }
+.xl-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.xl-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 5px 9px; border: 1px solid var(--line); border-radius: 99px;
+  background: var(--card); font-size: 10.5px; color: var(--ink-2);
+}
+.xl-chip b { font-family: var(--mono); font-size: 9.5px; font-weight: 600; color: var(--accent); }
+.xl-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+
+.xl-fields { display: flex; flex-direction: column; gap: 9px; }
+.xl-field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.xl-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.xl-field-label { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 10.5px; font-weight: 650; color: var(--ink-2); }
+.xl-field-label code { font-family: var(--mono); font-size: 9px; font-weight: 500; color: var(--accent); }
+.xl-field-label i {
+  padding: 1px 5px; border-radius: 99px; background: var(--card-2);
+  font-style: normal; font-size: 8.5px; font-weight: 600; color: var(--muted);
+}
+.xl-field small { font-size: 9px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xl-empty-fields {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; border: 1px dashed var(--line-strong); border-radius: var(--r-sm);
+  font-size: 11px; line-height: 1.55; color: var(--muted);
+}
+.xl-empty-fields .ico { width: 15px; height: 15px; flex: none; }
+
+.xl-name {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 13px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--card-2);
+}
+.xl-name-preview {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+  background: var(--card); color: var(--accent);
+}
+.xl-name-preview .ico { width: 16px; height: 16px; flex: none; }
+.xl-name-preview strong {
+  min-width: 0; font-family: var(--mono); font-size: 11.5px; font-weight: 650; color: var(--ink);
+  word-break: break-word;
+}
+.xl-pattern { display: flex; align-items: center; gap: 8px; }
+.xl-pattern > span { flex: none; font-size: 10px; font-weight: 650; color: var(--muted); }
+.xl-pattern .input { font-family: var(--mono); font-size: 10.5px; }
+.xl-hint { font-size: 10px; line-height: 1.55; color: var(--muted); }
+
+.xl-latest {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--ok-soft);
+}
+.xl-latest-ico { display: inline-flex; color: var(--ok); }
+.xl-latest-ico .ico { width: 17px; height: 17px; }
+.xl-latest-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.xl-latest-main > span { font-size: 8.5px; font-weight: 750; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ok); }
+.xl-latest-main strong { font-size: 11.5px; font-weight: 700; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xl-latest-main small { font-size: 9.5px; color: var(--muted); }
+.xl-latest-off { background: var(--card-2); }
+.xl-latest-off .xl-latest-ico { color: var(--muted); }
+.xl-latest-off .xl-latest-main > span { color: var(--muted); }
+.xl-latest-off .xl-latest-main strong { font-size: 10.5px; font-weight: 550; color: var(--muted); white-space: normal; }
+
+.xl-history { display: flex; flex-direction: column; gap: 4px; }
+.xl-history a {
+  display: flex; align-items: center; gap: 7px;
+  padding: 6px 9px; border-radius: 7px; color: var(--ink-2); text-decoration: none; font-size: 10.5px;
+}
+.xl-history a:hover { background: var(--card-2); }
+.xl-history a .ico { width: 12px; height: 12px; flex: none; color: var(--muted); }
+.xl-history a span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xl-history a small { flex: none; font-size: 9px; color: var(--muted); }
+
+.xl-save {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding-top: 4px;
+}
+.xl-save p { flex: 1 1 220px; display: flex; align-items: flex-start; gap: 6px; font-size: 10px; line-height: 1.55; color: var(--muted); }
+.xl-save p .ico { width: 13px; height: 13px; flex: none; margin-top: 1px; color: var(--accent); }
+.xl-save-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+
+.xl-busy {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  min-height: 220px; padding: 24px; text-align: center;
+}
+.xl-busy strong { font-size: 13px; font-weight: 700; }
+.xl-busy span:last-child { font-size: 10.5px; color: var(--muted); }
+.xl-error {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--r-sm);
+  background: var(--danger-soft); color: var(--danger); font-size: 11px; line-height: 1.5;
+}
+.xl-error .ico { width: 14px; height: 14px; flex: none; margin-top: 1px; }
+
+@media (max-width: 620px) {
+  .xl-field-grid { grid-template-columns: 1fr; }
+  .xl-hero { padding: 13px; }
+  .xl-hero .btn { width: 100%; justify-content: center; }
+  .xl-pattern { flex-direction: column; align-items: stretch; }
+  .xl-save-acts { width: 100%; margin-left: 0; }
+  .xl-save-acts .btn { flex: 1; justify-content: center; }
+  .xl-chip span { max-width: 150px; }
+}

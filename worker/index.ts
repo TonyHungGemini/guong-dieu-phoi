@@ -33,6 +33,7 @@ const USER_COOKIE = "guong_user";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30;
 const FILE_MAX_BYTES = 8 * 1024 * 1024;
 const FILE_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const EXCEL_FILE_ROLES = ["excel-template", "excel-latest"];
 const INLINE_FILE_TYPES = ["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif", "text/plain"];
 
 type SessionUser = {
@@ -799,12 +800,15 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
       .split(";")[0]
       .slice(0, 120) || "application/octet-stream";
     const reportId = String(request.headers.get("x-report-id") || "").slice(0, 64);
+    const rawRole = String(request.headers.get("x-file-role") || "").trim();
+    const role = EXCEL_FILE_ROLES.includes(rawRole) ? rawRole : "";
     const wanted = String(request.headers.get("x-file-id") || "");
     const id = FILE_ID_RE.test(wanted) ? wanted : `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
     const store = await readStore(env, key);
     const version = store.fileBlobs.filter((b: any) => b?.reportId === reportId).length + 1;
-    const meta = { id, reportId, name, size: bytes.byteLength, type, version, uploadedAt: new Date().toISOString() };
+    const meta: Record<string, unknown> = { id, reportId, name, size: bytes.byteLength, type, version, uploadedAt: new Date().toISOString() };
+    if (role) meta.role = role;
     await env.SYNC_KV.put(blobKey(key, id), bytes, {
       metadata: { reportId, name, type, size: bytes.byteLength },
     });
