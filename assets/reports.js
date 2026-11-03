@@ -366,7 +366,9 @@
     return Boolean(file && String(file.role || "").startsWith("excel-"));
   }
   function excelReady(report) {
-    return Boolean(report && report.excel && report.excel.templateId && report.excel.latestId);
+    const excel = report && report.excel;
+    if (!excel || !excel.templateId) return false;
+    return Boolean(excel.latestId) || excel.mode === "grid";
   }
   function reportFiles(report) {
     return (R.fileBlobs || [])
@@ -2059,17 +2061,33 @@
   }
 
   async function readyToSubmit(report) {
-    openPrimaryFile(report);
-    const content = report.notes || report.aiSummary || report.title || "";
-    if (content && navigator.clipboard) navigator.clipboard.writeText(content).catch(() => {});
     const target = String(report.submissionUrl || "").trim();
     if (target) window.open(/^https?:\/\//i.test(target) ? target : `https://${target}`, "_blank", "noopener,noreferrer");
+    let fresh = null;
+    if (report.excel && report.excel.templateId && A.excelBridge && typeof A.excelBridge.regenerate === "function") {
+      fresh = await A.excelBridge.regenerate(report).catch(() => null);
+    }
+    if (fresh && fresh.id) {
+      const link = document.createElement("a");
+      link.href = `/api/files/${encodeURIComponent(fresh.id)}?download=1`;
+      link.download = fresh.name || "bao-cao.xlsx";
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      A.toast(`Đã tạo bản Excel mới cho ngày nộp: “${fresh.name}”.`, "info");
+    } else {
+      openPrimaryFile(report);
+    }
+    const content = report.notes || report.aiSummary || report.title || "";
+    if (content && navigator.clipboard) navigator.clipboard.writeText(content).catch(() => {});
+    const live = findReport(report.id) || report;
     const now = new Date().toISOString();
-    const wasDone = isDone(report);
-    report.status = "Sent";
-    report.lastSentAt = now;
-    report.updatedAt = now;
-    logAction(report, "submit", `Nộp báo cáo${target ? ` tại ${target}` : ""}`);
+    const wasDone = isDone(live);
+    live.status = "Sent";
+    live.lastSentAt = now;
+    live.updatedAt = now;
+    logAction(live, "submit", `Nộp báo cáo${target ? ` tại ${target}` : ""}`);
     R.reports = sortReports(R.reports);
     refresh();
     try {
@@ -2079,7 +2097,7 @@
       A.toast(err.message || "Chưa đồng bộ được trạng thái Đã gửi.", "error");
       return;
     }
-    if (report.frequency && report.frequency !== "none") autoAdvance();
+    if (live.frequency && live.frequency !== "none") autoAdvance();
   }
 
   function sendZalo(report) {

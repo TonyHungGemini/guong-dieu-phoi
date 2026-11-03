@@ -71,12 +71,18 @@
   };
   const FREQ_LABEL = { none: "Không định kỳ", daily: "Hàng ngày", weekly: "Hàng tuần", monthly: "Hàng tháng", yearly: "Hàng năm" };
 
+  const COLS_PER_PAGE = 16;
+  const ROWS_PER_PAGE = 60;
+
   const state = {
     busy: null,
     error: "",
     draft: Object.create(null),
     suggestion: null,
     libPromise: null,
+    grid: null,
+    gridLoading: null,
+    gridFailed: null,
   };
 
   function bridge() {
@@ -316,16 +322,78 @@
     return pairs.slice(0, 40);
   }
 
+  function sheetStats(sheet) {
+    let cells = 0;
+    let formulas = 0;
+    let dates = 0;
+    let rows = 0;
+    let cols = 0;
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+        const value = cell.value;
+        if (value === null || value === undefined || value === "") return;
+        cells += 1;
+        if (rowNumber > rows) rows = rowNumber;
+        if (colNumber > cols) cols = colNumber;
+        if (value instanceof Date) dates += 1;
+        else if (typeof value === "object" && (value.formula || value.sharedFormula)) formulas += 1;
+      });
+    });
+    return { rows, cols, cells, formulas, dates, merges: (sheet.model.merges || []).length };
+  }
+
+  function dateHint(text) {
+    const match = /(^|[^\d])(\d{1,2})\s*[/\-.]\s*(\d{1,2})\s*[/\-.]\s*(\d{4})(?!\d)/.exec(String(text || ""));
+    if (!match) return "";
+    const day = Number(match[2]);
+    const month = Number(match[3]);
+    const year = Number(match[4]);
+    if (day < 1 || day > 31 || month < 1 || month > 12 || year < 2000 || year > 2100) return "";
+    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  function monthHint(text) {
+    const match = /\b(THÁNG|Tháng|tháng)\s+(\d{1,2})\s*[/\-]\s*(\d{4})\b/u.exec(String(text || ""));
+    if (!match) return "";
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    if (month < 1 || month > 12 || year < 2000 || year > 2100) return "";
+    return `${year}-${String(month).padStart(2, "0")}-01`;
+  }
+
   async function inspectWorkbook(buffer) {
     const ExcelJS = await loadExcelJS();
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(buffer);
     const fields = new Map();
     const builtins = new Set();
+    const sheetNames = [];
+    let dateGuess = "";
+    let monthGuess = "";
+    let totalCells = 0;
+    let totalFormulas = 0;
+    let totalMerges = 0;
+    let maxRows = 0;
+    let maxCols = 0;
+    let gridSheet = "";
+    let gridCells = -1;
     workbook.eachSheet((sheet) => {
+      const stats = sheetStats(sheet);
+      sheetNames.push(sheet.name);
+      totalCells += stats.cells;
+      totalFormulas += stats.formulas;
+      totalMerges += stats.merges;
+      if (stats.rows > maxRows) maxRows = stats.rows;
+      if (stats.cols > maxCols) maxCols = stats.cols;
+      if (stats.cells > gridCells) {
+        gridCells = stats.cells;
+        gridSheet = sheet.name;
+      }
       sheet.eachRow({ includeEmpty: false }, (row) => {
         row.eachCell({ includeEmpty: false }, (cell) => {
           const text = readCellText(cell.value);
+          if (!dateGuess && text) dateGuess = dateHint(text);
+          if (!monthGuess && text) monthGuess = monthHint(text);
           if (!text || !text.includes("{{")) return;
           for (const match of text.matchAll(TOKEN_RE)) {
             const key = normalizeKey(match[1]);
@@ -347,15 +415,26 @@
         });
       });
     });
-    const suggestions = !fields.size && !builtins.size ? detectPairs(workbook) : [];
-    if (!fields.size && !builtins.size && !suggestions.length) {
-      throw new Error("Mẫu chưa có biến nào. Gõ dạng {{doanh_thu}} vào ô cần điền, hoặc dùng bảng có cặp nhãn – số liệu để GUỒNG tự tạo biến.");
+    if (!totalCells) {
+      throw new Error("Tệp Excel không có dữ liệu. Kiểm tra lại tệp rồi thử lại.");
     }
+    const suggestions = !fields.size && !builtins.size ? detectPairs(workbook) : [];
     return {
       fields: Array.from(fields.values()),
       builtins: Array.from(builtins),
       suggestions,
-      sheetNames: workbook.worksheets.map((sheet) => sheet.name).slice(0, 8),
+      sheetNames: sheetNames.slice(0, 20),
+      gridSheet,
+      dateGuess,
+      monthGuess,
+      stats: {
+        sheets: sheetNames.length,
+        rows: maxRows,
+        cols: maxCols,
+        cells: totalCells,
+        formulas: totalFormulas,
+        merges: totalMerges,
+      },
     };
   }
 
@@ -399,6 +478,15 @@
     const res = await fetch(fileUrl(id, true), { credentials: "same-origin", cache: "no-store" });
     if (!res.ok) {
       throw new Error(res.status === 404 ? "Tệp mẫu không còn trong kho. Hãy tải mẫu lại." : `Không tải được tệp mẫu (${res.status}).`);
+    }
+    return res.arrayBuffer();
+  }
+
+  async function fetchFileBuffer(id) {
+    if (!id) throw new Error("Chưa có tệp Excel để mở.");
+    const res = await fetch(fileUrl(id, true), { credentials: "same-origin", cache: "no-store" });
+    if (!res.ok) {
+      throw new Error(res.status === 404 ? "Tệp Excel không còn trong kho. Hãy tải lại tệp gốc." : `Không tải được tệp Excel (${res.status}).`);
     }
     return res.arrayBuffer();
   }
@@ -464,10 +552,16 @@
       const info = await inspectWorkbook(buffer);
       if (!info.fields.length && !info.builtins.length) {
         const pairs = info.suggestions || [];
+        if (!pairs.length) {
+          setBusy(report, "Đang lưu bảng lên kho…");
+          await installGridTemplate(report, buffer, file.name, info);
+          return;
+        }
         state.suggestion = {
           reportId: report.id,
           fileName: file.name,
           buffer,
+          info,
           pairs,
           selected: new Set(pairs.map(pairId)),
         };
@@ -529,6 +623,63 @@
     A.toast(`Đã nhận mẫu “${meta.name}”.`, "success");
   }
 
+  async function installGridTemplate(report, buffer, name, info) {
+    const old = report.excel || {};
+    const meta = await postFile(report, new Blob([buffer], { type: XLSX_MIME }), name, "excel-template");
+    let gridDate = report.date || A.todayISO();
+    const anchor = gridDate;
+    const near = (iso, days) => Boolean(iso && A.diffDays && Math.abs(A.diffDays(iso, anchor)) <= days);
+    if (near(info.dateGuess, 183)) gridDate = info.dateGuess;
+    else if (near(info.monthGuess, 400)) gridDate = info.monthGuess;
+    report.excel = {
+      mode: "grid",
+      templateId: meta.id,
+      templateName: meta.name,
+      templateSize: meta.size,
+      templateSheets: info.sheetNames,
+      gridSheet: info.gridSheet,
+      gridDate,
+      gridStats: info.stats,
+      fields: [],
+      builtins: [],
+      values: {},
+      filenamePattern: String(old.filenamePattern || DEFAULT_PATTERN),
+      latestId: "",
+      latestName: "",
+      latestAt: "",
+      latestSize: 0,
+      lastSavedAt: "",
+      updatedAt: new Date().toISOString(),
+    };
+    delete state.draft[report.id];
+    resetGrid();
+    const bridgeRef = bridge();
+    if (bridgeRef) {
+      bridgeRef.log(report, "excel", `Bảng trực tiếp ${meta.name} · ${info.stats.rows} hàng`);
+      await bridgeRef.save(report);
+    }
+    if (old.templateId && old.templateId !== meta.id) deleteFile(old.templateId).catch(() => {});
+    state.busy = null;
+    state.suggestion = null;
+    state.error = "";
+    if (bridgeRef) bridgeRef.refreshDetail();
+    A.toast(`Đã nhận bảng “${meta.name}”. Sửa trực tiếp rồi bấm Lưu.`, "success");
+  }
+
+  async function useGridSuggestion(report) {
+    if (!apiReady()) return;
+    const suggestion = state.suggestion;
+    if (!suggestion || suggestion.reportId !== report.id) return;
+    setBusy(report, "Đang mở bảng trực tiếp…");
+    try {
+      const info = suggestion.info || (await inspectWorkbook(suggestion.buffer));
+      setBusy(report, "Đang lưu bảng lên kho…");
+      await installGridTemplate(report, suggestion.buffer, suggestion.fileName, info);
+    } catch (err) {
+      setError(report, err);
+    }
+  }
+
   async function applySuggestion(report) {
     if (!apiReady()) return;
     const suggestion = state.suggestion;
@@ -564,8 +715,9 @@
     }
   }
 
-  async function saveVersion(report) {
-    if (!apiReady()) return;
+  async function saveVersion(report, options) {
+    const opts = options || {};
+    if (!apiReady()) return null;
     const bridgeRef = bridge();
     const draft = draftOf(report);
     setBusy(report, "Đang ghép số liệu vào mẫu…");
@@ -595,7 +747,11 @@
       delete state.draft[report.id];
       state.busy = null;
       if (bridgeRef) bridgeRef.refreshDetail();
-      A.toast(`Đã lưu “${meta.name}”.`, "success");
+      if (opts.toast !== false) A.toast(`Đã lưu “${meta.name}”.`, "success");
+      if (opts.download === false) {
+        pruneGenerated(report.id, meta.id);
+        return { id: meta.id, name: meta.name };
+      }
       const link = document.createElement("a");
       link.href = fileUrl(meta.id, true);
       link.download = meta.name;
@@ -604,9 +760,509 @@
       link.click();
       link.remove();
       pruneGenerated(report.id, meta.id);
+      return { id: meta.id, name: meta.name };
     } catch (err) {
       setError(report, err);
+      return null;
     }
+  }
+
+  /* ---------- chế độ sửa bảng trực tiếp ---------- */
+  function resetGrid(reportId) {
+    if (!reportId || (state.grid && state.grid.reportId === reportId)) state.grid = null;
+  }
+
+  function parseAddress(address) {
+    const match = /^([A-Z]+)(\d+)$/i.exec(String(address || "").trim());
+    if (!match) return null;
+    let col = 0;
+    const letters = match[1].toUpperCase();
+    for (let i = 0; i < letters.length; i += 1) col = col * 26 + (letters.charCodeAt(i) - 64);
+    return { col, row: Number(match[2]) };
+  }
+
+  function prepareGridSheet(cache, sheet) {
+    cache.sheet = sheet.name;
+    cache.sheetRef = sheet;
+    let usedRows = 0;
+    let usedCols = 0;
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
+        const value = cell.value;
+        if (value === null || value === undefined || value === "") return;
+        if (rowNumber > usedRows) usedRows = rowNumber;
+        if (colNumber > usedCols) usedCols = colNumber;
+      });
+    });
+    cache.maxRow = Math.max(1, Math.min(usedRows || sheet.rowCount || 1, 500));
+    cache.maxCol = Math.max(1, Math.min(usedCols || sheet.columnCount || 1, 5000));
+    cache.spans = new Map();
+    const merges = sheet.model && Array.isArray(sheet.model.merges) ? sheet.model.merges : [];
+    merges.forEach((range) => {
+      const parts = String(range).split(":");
+      const start = parseAddress(parts[0]);
+      const end = parseAddress(parts[1] || parts[0]);
+      if (!start || !end) return;
+      cache.spans.set(`${start.row}:${start.col}`, { rows: end.row - start.row + 1, cols: end.col - start.col + 1 });
+    });
+    cache.dayGroups = [];
+    cache.fixedCols = 0;
+    let best = null;
+    const lastRow = Math.min(cache.maxRow, 12);
+    for (let row = 1; row <= lastRow; row += 1) {
+      const groups = [];
+      for (let col = 1; col <= cache.maxCol; col += 1) {
+        const text = pairText(sheet.getCell(row, col).value);
+        if (!/^ngày\s+\d{1,2}/iu.test(text)) continue;
+        const last = groups[groups.length - 1];
+        if (!last || last.label !== text) groups.push({ label: text, col });
+      }
+      if (!best || groups.length > best.length) best = groups;
+    }
+    if (best && best.length >= 3) {
+      cache.dayGroups = best.map((group, index) => ({
+        label: group.label,
+        col: group.col,
+        end: index + 1 < best.length ? best[index + 1].col - 1 : Math.min(cache.maxCol, group.col + 3),
+      }));
+      cache.fixedCols = Math.min(cache.dayGroups[0].col - 1, 6);
+    }
+    cache.page = 0;
+    cache.rowPage = 0;
+    cache.dayFocus = 0;
+  }
+
+  async function loadGrid(report) {
+    const excel = report.excel || {};
+    const baseId = excel.latestId || excel.templateId;
+    if (!baseId) throw new Error("Báo cáo chưa có tệp Excel.");
+    if (state.grid && state.grid.reportId === report.id && state.grid.baseId === baseId) return state.grid;
+    if (state.gridLoading && state.gridLoading.id === report.id) return state.gridLoading.promise;
+    const promise = (async () => {
+      const ExcelJS = await loadExcelJS();
+      const buffer = await fetchFileBuffer(baseId);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+      const target =
+        workbook.getWorksheet(excel.gridSheet) ||
+        workbook.worksheets.find((sheet) => (sheet.rowCount || 0) > 0) ||
+        workbook.worksheets[0];
+      if (!target) throw new Error("Tệp Excel không có trang tính nào.");
+      const cache = {
+        reportId: report.id,
+        baseId,
+        workbook,
+        sheet: target.name,
+        sheetRef: target,
+        page: 0,
+        rowPage: 0,
+        dirty: false,
+      };
+      prepareGridSheet(cache, target);
+      state.grid = cache;
+      state.gridFailed = null;
+      return cache;
+    })();
+    state.gridLoading = { id: report.id, promise };
+    try {
+      return await promise;
+    } finally {
+      if (state.gridLoading && state.gridLoading.promise === promise) state.gridLoading = null;
+    }
+  }
+
+  function startGridLoad(report) {
+    if (state.gridLoading && state.gridLoading.id === report.id) return;
+    loadGrid(report)
+      .then(() => {
+        if (bridge()) bridge().refreshDetail();
+      })
+      .catch((err) => {
+        state.gridFailed = {
+          id: report.id,
+          message: err && err.message ? err.message : "Chưa mở được bảng Excel.",
+        };
+        const bridgeRef = bridge();
+        if (bridgeRef) bridgeRef.refreshDetail();
+        A.toast(state.gridFailed.message, "error");
+      });
+  }
+
+  function gridColumnWindow(cache) {
+    if (cache.dayGroups.length) {
+      const per = 5;
+      const pages = Math.max(Math.ceil(cache.dayGroups.length / per), 1);
+      const page = Math.min(Math.max(cache.page, 0), pages - 1);
+      const from = cache.dayGroups[page * per].col;
+      const next = cache.dayGroups[(page + 1) * per];
+      const to = next ? next.col - 1 : cache.dayGroups[cache.dayGroups.length - 1].end;
+      return { page, pages, from, to: Math.min(to, cache.maxCol) };
+    }
+    const first = cache.fixedCols + 1;
+    const pages = Math.max(Math.ceil(Math.max(cache.maxCol - cache.fixedCols, 1) / COLS_PER_PAGE), 1);
+    const page = Math.min(Math.max(cache.page, 0), pages - 1);
+    const from = first + page * COLS_PER_PAGE;
+    return { page, pages, from, to: Math.min(cache.maxCol, from + COLS_PER_PAGE - 1) };
+  }
+
+  function gridRowWindow(cache) {
+    const pages = Math.max(Math.ceil(cache.maxRow / ROWS_PER_PAGE), 1);
+    const page = Math.min(Math.max(cache.rowPage, 0), pages - 1);
+    const from = page * ROWS_PER_PAGE + 1;
+    return { page, pages, from, to: Math.min(cache.maxRow, from + ROWS_PER_PAGE - 1) };
+  }
+
+  function gridColumns(cache, win) {
+    const list = [];
+    for (let col = 1; col <= cache.fixedCols; col += 1) list.push(col);
+    for (let col = win.from; col <= win.to; col += 1) {
+      if (!list.includes(col)) list.push(col);
+    }
+    return list;
+  }
+
+  function gridCellHtml(cache, row, col, colspan, rowspan) {
+    const cell = cache.sheetRef.getCell(row, col);
+    const spanAttr = `${rowspan > 1 ? ` rowspan="${rowspan}"` : ""}${colspan > 1 ? ` colspan="${colspan}"` : ""}`;
+    const value = cell.value;
+    if (value && typeof value === "object" && (value.formula || value.sharedFormula)) {
+      const result = value.result;
+      let shown = `=${value.formula || ""}`;
+      if (result instanceof Date) shown = fmtDate(result.toISOString().slice(0, 10), "/");
+      else if (result !== undefined && result !== null) shown = String(result);
+      const title = `Công thức =${value.formula || value.sharedFormula || ""}`;
+      return `<td${spanAttr} class="xl-grid-ro" title="${esc(title)}">${esc(shown)}</td>`;
+    }
+    if (value instanceof Date) {
+      const iso = value.toISOString().slice(0, 10);
+      return `<td${spanAttr} class="xl-grid-ro xl-grid-date" title="Tự đổi theo ngày báo cáo">${esc(fmtDate(iso, "/"))}</td>`;
+    }
+    let text = "";
+    let kind = "s";
+    if (typeof value === "number") {
+      text = String(value);
+      kind = "n";
+    } else if (typeof value === "boolean") {
+      text = value ? "TRUE" : "FALSE";
+    } else if (value && typeof value === "object" && Array.isArray(value.richText)) {
+      text = readCellText(value);
+      kind = "r";
+    } else if (typeof value === "string") {
+      text = value;
+    } else if (value && typeof value === "object" && typeof value.text === "string") {
+      text = value.text;
+    }
+    return `<td${spanAttr} class="xl-grid-edit"><input class="xl-grid-input${kind === "n" ? " is-num" : ""}" data-xl-grid-cell="${row}:${col}" data-xl-kind="${kind}" value="${esc(text)}" inputmode="${kind === "n" ? "decimal" : "text"}" autocomplete="off" spellcheck="false"></td>`;
+  }
+
+  function gridTableHtml(cache) {
+    const rows = gridRowWindow(cache);
+    const cols = gridColumnWindow(cache);
+    const list = gridColumns(cache, cols);
+    const head = `<colgroup><col class="xl-grid-numcol">${list
+      .map((col) => {
+        const width = cache.sheetRef.getColumn(col).width;
+        const px = Math.max(44, Math.min(Math.round((Number(width) || 12) * 7), 240));
+        return `<col style="width:${px}px">`;
+      })
+      .join("")}</colgroup>`;
+    let body = "";
+    for (let row = rows.from; row <= rows.to; row += 1) {
+      let cells = "";
+      for (let index = 0; index < list.length; index += 1) {
+        const col = list[index];
+        const cell = cache.sheetRef.getCell(row, col);
+        const master = cell.master || cell;
+        if (master.address !== cell.address) continue;
+        const span = cache.spans.get(`${row}:${col}`);
+        let colspan = 1;
+        let rowspan = 1;
+        if (span) {
+          rowspan = Math.max(1, Math.min(span.rows, rows.to - row + 1));
+          while (
+            index + colspan < list.length &&
+            list[index + colspan] === col + colspan &&
+            colspan < span.cols
+          ) {
+            colspan += 1;
+          }
+        }
+        cells += gridCellHtml(cache, row, col, colspan, rowspan);
+      }
+      body += `<tr><th class="xl-grid-rowno">${row}</th>${cells}</tr>`;
+    }
+    return `<div class="xl-grid-wrap"><table class="xl-grid-table">${head}<tbody>${body}</tbody></table></div>`;
+  }
+
+  function gridTab(report) {
+    const excel = report.excel || {};
+    const cache = state.grid && state.grid.reportId === report.id ? state.grid : null;
+    if (!cache) {
+      if (state.gridFailed && state.gridFailed.id === report.id) {
+        return `<div class="rp-dr-section">
+          ${errorHtml()}
+          <div class="xl-hero">
+            <span class="xl-hero-ico">${A.icon("alert")}</span>
+            <div class="xl-hero-main">
+              <h4>Chưa mở được bảng Excel</h4>
+              <p>${esc(state.gridFailed.message)}</p>
+            </div>
+            <button class="btn btn-accent" type="button" data-xl-grid-retry data-id="${esc(report.id)}">${A.icon("refresh")} Thử lại</button>
+          </div>
+          <div class="xl-suggest-alt">
+            <button class="btn btn-ghost btn-sm" type="button" data-xl-pick-template data-id="${esc(report.id)}">${A.icon("upload")} Đổi tệp mẫu</button>
+            <input type="file" data-xl-template-input data-id="${esc(report.id)}" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+          </div>
+        </div>`;
+      }
+      startGridLoad(report);
+      return `<div class="rp-dr-section">${busyHtml("Đang mở bảng Excel…")}</div>`;
+    }
+    const colWin = gridColumnWindow(cache);
+    const rowWin = gridRowWindow(cache);
+    const stats = excel.gridStats || {};
+    const sheetNames = Array.isArray(excel.templateSheets) && excel.templateSheets.length
+      ? excel.templateSheets
+      : [cache.sheet];
+    const dayBase = colWin.page * 5;
+    const dayIndex = cache.dayGroups.length
+      ? Math.min(cache.dayGroups.length - 1, cache.dayFocus >= dayBase && cache.dayFocus < dayBase + 5 ? cache.dayFocus : dayBase)
+      : 0;
+    const sheetPicker = sheetNames.length > 1
+      ? `<label class="xl-grid-pick"><span>Trang tính</span><select data-xl-grid-sheet data-id="${esc(report.id)}">${sheetNames
+          .map((name) => `<option value="${esc(name)}"${name === cache.sheet ? " selected" : ""}>${esc(name)}</option>`)
+          .join("")}</select></label>`
+      : "";
+    const dayPicker = cache.dayGroups.length
+      ? `<label class="xl-grid-pick"><span>Nhảy tới ngày</span><select data-xl-grid-day data-id="${esc(report.id)}">${cache.dayGroups
+          .map(
+            (group, index) =>
+              `<option value="${index}"${index === dayIndex ? " selected" : ""}>${esc(`${group.label} · cột ${group.col}`)}</option>`
+          )
+          .join("")}</select></label>`
+      : `<label class="xl-grid-pick"><span>Tới trang cột</span><input class="input" type="number" min="1" max="${colWin.pages}" value="${colWin.page + 1}" data-xl-grid-page-input data-id="${esc(report.id)}"></label>`;
+    const rowBar = rowWin.pages > 1
+      ? `<div class="xl-grid-page">
+          <button type="button" class="icon-btn bare" data-xl-grid-rowpage="-1" data-id="${esc(report.id)}" title="Trang trước"${rowWin.page === 0 ? " disabled" : ""}>${A.icon("chevron-left")}</button>
+          <span>Hàng ${rowWin.from}–${rowWin.to} / ${cache.maxRow}</span>
+          <button type="button" class="icon-btn bare" data-xl-grid-rowpage="1" data-id="${esc(report.id)}" title="Trang sau"${rowWin.page >= rowWin.pages - 1 ? " disabled" : ""}>${A.icon("chevron-right")}</button>
+        </div>`
+      : "";
+    return `<div class="rp-dr-section">
+      ${errorHtml()}
+      <div class="xl-head">
+        <span class="xl-head-ico">${A.icon("grid")}</span>
+        <div class="xl-head-main">
+          <strong title="${esc(excel.templateName || "Bảng Excel")}">${esc(excel.templateName || "Bảng Excel")}</strong>
+          <span>Bảng trực tiếp · ${Number(stats.rows) || cache.maxRow} hàng · ${Number(stats.cols) || cache.maxCol} cột${
+            Number(stats.formulas) ? ` · ${Number(stats.formulas)} công thức` : ""
+          }</span>
+        </div>
+        <div class="xl-head-acts">
+          <a class="btn btn-ghost btn-sm" href="${fileUrl(excel.templateId, true)}" title="Tải tệp gốc">${A.icon("download")} Gốc</a>
+          <button class="btn btn-ghost btn-sm" type="button" data-xl-pick-template data-id="${esc(report.id)}">${A.icon("refresh")} Đổi mẫu</button>
+        </div>
+        <input type="file" data-xl-template-input data-id="${esc(report.id)}" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+      </div>
+      <div class="xl-grid-note">${A.icon("calendar")} Ngày báo cáo <b>${esc(fmtDate(report.date, "/") || "—")}</b>. GUỒNG tự thay ngày, tháng trong tệp khi lưu bản mới.</div>
+      <div class="xl-grid-bar">
+        ${sheetPicker}
+        ${dayPicker}
+        <div class="xl-grid-page">
+          <button type="button" class="icon-btn bare" data-xl-grid-colpage="-1" data-id="${esc(report.id)}" title="Lùi"${colWin.page === 0 ? " disabled" : ""}>${A.icon("chevron-left")}</button>
+          <span>${cache.dayGroups.length ? `Ngày ${esc(cache.dayGroups[dayIndex].label.replace(/^ngày\s+/iu, ""))}` : `Cột ${colWin.from}–${colWin.to}`} / ${cache.maxCol} cột</span>
+          <button type="button" class="icon-btn bare" data-xl-grid-colpage="1" data-id="${esc(report.id)}" title="Tiến"${colWin.page >= colWin.pages - 1 ? " disabled" : ""}>${A.icon("chevron-right")}</button>
+        </div>
+        ${rowBar}
+      </div>
+      ${gridTableHtml(cache)}
+      <div class="xl-grid-hint">${A.icon("alert")} Ô trắng là nhập được. Ô xám là công thức hoặc ngày tự động. Định dạng, gộp ô và công thức giữ nguyên như tệp gốc.</div>
+      ${filenameHtml(report, draftOf(report))}
+      <div class="xl-save">
+        <p>${A.icon("alert")} Mỗi lần lưu tạo một bản mới trong kho. Bản sau mở lại từ bản mới nhất để giữ số liệu vừa nhập.</p>
+        <div class="xl-save-acts">
+          <button class="btn btn-ghost btn-sm" type="button" data-xl-grid-reload data-id="${esc(report.id)}">${A.icon("refresh")} Bỏ thay đổi</button>
+          <button class="btn btn-accent" type="button" data-xl-save data-id="${esc(report.id)}">${A.icon("download")} Lưu &amp; tải xuống</button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function applyGridInput(cache, target) {
+    const parts = String(target.getAttribute("data-xl-grid-cell") || "").split(":");
+    const row = Number(parts[0]);
+    const col = Number(parts[1]);
+    if (!row || !col) return;
+    const cell = cache.sheetRef.getCell(row, col);
+    const kind = target.getAttribute("data-xl-kind") || "s";
+    const text = target.value;
+    if (text === "") {
+      cell.value = null;
+    } else if (kind === "n") {
+      const num = Number(text.replace(",", "."));
+      cell.value = Number.isFinite(num) ? num : text;
+    } else if (kind === "r" && cell.value && Array.isArray(cell.value.richText)) {
+      const font = (cell.value.richText[0] || {}).font;
+      cell.value = { richText: [{ font: font ? Object.assign({}, font) : undefined, text }] };
+    } else {
+      cell.value = text;
+    }
+    cache.dirty = true;
+    const editor = target.closest(".xl-grid-wrap");
+    if (editor) editor.classList.add("is-dirty");
+    const save = document.querySelector(`[data-xl-save][data-id="${cache.reportId}"]`);
+    if (save && !save.classList.contains("is-dirty")) {
+      save.classList.add("is-dirty");
+      save.innerHTML = `${A.icon("pencil")} Lưu thay đổi`;
+    }
+  }
+
+  function dateParts(iso) {
+    const date = parseISO(iso);
+    if (!date) return null;
+    const day = date.getUTCDate();
+    const month = date.getUTCMonth() + 1;
+    return {
+      day,
+      month,
+      year: date.getUTCFullYear(),
+      dd: String(day).padStart(2, "0"),
+      mm: String(month).padStart(2, "0"),
+    };
+  }
+
+  function replaceDateText(text, oldIso, newIso) {
+    if (!text) return text;
+    const a = dateParts(oldIso);
+    const b = dateParts(newIso);
+    if (!a || !b) return text;
+    let out = text;
+    const pairs = [
+      [`${a.dd}/${a.mm}/${a.year}`, `${b.dd}/${b.mm}/${b.year}`],
+      [`${a.day}/${a.month}/${a.year}`, `${b.day}/${b.month}/${b.year}`],
+      [`${a.dd}-${a.mm}-${a.year}`, `${b.dd}-${b.mm}-${b.year}`],
+      [`${a.dd}.${a.mm}.${a.year}`, `${b.dd}.${b.mm}.${b.year}`],
+      [`${a.year}-${a.mm}-${a.dd}`, `${b.year}-${b.mm}-${b.dd}`],
+    ];
+    pairs.forEach(([from, to]) => {
+      if (from !== to) out = out.split(from).join(to);
+    });
+    if (a.month !== b.month || a.year !== b.year) {
+      out = out.replace(/\b(THÁNG|Tháng|tháng)\s+(\d{1,2})\s*[/\-]\s*(\d{4})\b/gu, (match, word, month, year) => {
+        if (Number(month) !== a.month || Number(year) !== a.year) return match;
+        return `${word} ${b.mm}/${b.year}`;
+      });
+    }
+    return out;
+  }
+
+  function replaceWorkbookDates(workbook, oldIso, newIso) {
+    if (!oldIso || !newIso || oldIso === newIso) return 0;
+    const a = dateParts(oldIso);
+    const b = dateParts(newIso);
+    if (!a || !b) return 0;
+    let changed = 0;
+    workbook.eachSheet((sheet) => {
+      sheet.eachRow({ includeEmpty: false }, (row) => {
+        row.eachCell({ includeEmpty: false }, (cell) => {
+          const value = cell.value;
+          if (value instanceof Date) {
+            if (
+              value.getUTCFullYear() === a.year &&
+              value.getUTCMonth() + 1 === a.month &&
+              value.getUTCDate() === a.day
+            ) {
+              cell.value = new Date(Date.UTC(b.year, b.month - 1, b.day));
+              changed += 1;
+            }
+            return;
+          }
+          if (typeof value === "string") {
+            const next = replaceDateText(value, oldIso, newIso);
+            if (next !== value) {
+              cell.value = next;
+              changed += 1;
+            }
+            return;
+          }
+          if (value && typeof value === "object" && Array.isArray(value.richText)) {
+            let touched = false;
+            const runs = value.richText.map((run) => {
+              const text = String(run.text || "");
+              const next = replaceDateText(text, oldIso, newIso);
+              if (next === text) return run;
+              touched = true;
+              return Object.assign({}, run, { text: next });
+            });
+            if (touched) {
+              cell.value = { richText: runs };
+              changed += 1;
+            }
+          }
+        });
+      });
+    });
+    return changed;
+  }
+
+  async function saveGridVersion(report, options) {
+    const opts = options || {};
+    if (!apiReady()) return null;
+    const bridgeRef = bridge();
+    setBusy(report, "Đang mở bảng Excel…");
+    try {
+      const cache = await loadGrid(report);
+      const oldDate = (report.excel && report.excel.gridDate) || report.date || "";
+      setBusy(report, "Đang cập nhật ngày và số liệu…");
+      replaceWorkbookDates(cache.workbook, oldDate, report.date || oldDate);
+      cache.workbook.calcProperties.fullCalcOnLoad = true;
+      const output = await cache.workbook.xlsx.writeBuffer();
+      const name = filenameFor(report);
+      setBusy(report, "Đang lưu bản Excel mới…");
+      const meta = await postFile(report, new Blob([output], { type: XLSX_MIME }), name, "excel-latest");
+      const old = report.excel || {};
+      report.excel = Object.assign({}, old, {
+        mode: "grid",
+        gridDate: report.date || oldDate,
+        gridSheet: cache.sheet,
+        latestId: meta.id,
+        latestName: meta.name,
+        latestAt: meta.uploadedAt,
+        latestSize: meta.size,
+        latestVersion: meta.version,
+        lastSavedAt: meta.uploadedAt,
+        updatedAt: new Date().toISOString(),
+      });
+      if (bridgeRef) {
+        bridgeRef.log(report, "excel", `Lưu ${meta.name}`);
+        await bridgeRef.save(report);
+      }
+      resetGrid(report.id);
+      state.busy = null;
+      if (bridgeRef) bridgeRef.refreshDetail();
+      if (opts.toast !== false) A.toast(`Đã lưu “${meta.name}”.`, "success");
+      if (opts.download !== false) {
+        const link = document.createElement("a");
+        link.href = fileUrl(meta.id, true);
+        link.download = meta.name;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      }
+      pruneGenerated(report.id, meta.id);
+      return { id: meta.id, name: meta.name };
+    } catch (err) {
+      setError(report, err);
+      return null;
+    }
+  }
+
+  function buildFresh(report, options) {
+    const excel = report && report.excel;
+    if (!excel || !excel.templateId) return null;
+    if (excel.mode === "grid") return saveGridVersion(report, options || {});
+    return saveVersion(report, options || {});
   }
 
   function pruneGenerated(reportId, keepId) {
@@ -658,6 +1314,7 @@
       <div class="xl-suggest-list">${rows}</div>
       <div class="xl-suggest-acts">
         <button class="btn btn-ghost btn-sm" type="button" data-xl-dismiss-suggest data-id="${esc(report.id)}">Bỏ qua</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-xl-use-grid data-id="${esc(report.id)}">${A.icon("grid")} Sửa trực tiếp bảng</button>
         <button class="btn btn-accent btn-sm" type="button" data-xl-use-suggest data-id="${esc(report.id)}">${A.icon("check")} Dùng tệp này làm mẫu</button>
       </div>
     </div>`;
@@ -680,15 +1337,15 @@
         <span class="xl-hero-ico">${A.icon("grid")}</span>
         <div class="xl-hero-main">
           <h4>Báo cáo Excel lặp lại</h4>
-          <p>Tải mẫu <b>.xlsx</b> một lần. GUỒNG dò biến <code>{{ten_bien}}</code>, hoặc tự nhận diện cặp nhãn – số liệu trong báo cáo cũ, rồi giữ số liệu cho kỳ sau.</p>
+          <p>Tải báo cáo <b>.xlsx</b> một lần. GUỒNG dò biến <code>{{ten_bien}}</code>, nhận diện cặp nhãn – số liệu, hoặc mở luôn bảng để sửa trực tiếp như trong Excel.</p>
         </div>
         <button class="btn btn-accent" type="button" data-xl-pick-template data-id="${esc(report.id)}">${A.icon("upload")} Chọn mẫu .xlsx</button>
         <input type="file" data-xl-template-input data-id="${esc(report.id)}" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       </div>
       <div class="xl-guide">
-        <div><b>1</b><span>Mở file Excel mẫu và gõ <code>{{ngay}}</code>, <code>{{du_an}}</code>, <code>{{doanh_thu}}</code> vào ô cần điền — hoặc tải lên báo cáo cũ có cặp nhãn – số liệu.</span></div>
-        <div><b>2</b><span>Tải mẫu lên đây. Các biến thành ô nhập, định dạng và công thức của mẫu được giữ nguyên.</span></div>
-        <div><b>3</b><span>Mỗi kỳ mở báo cáo, nhập số liệu, xem tên tệp rồi bấm <b>Lưu &amp; tải xuống</b>.</span></div>
+        <div><b>1</b><span>Tải lên file Excel bạn vẫn dùng hằng ngày — có biến hay không đều được.</span></div>
+        <div><b>2</b><span>GUỒNG giữ định dạng, gộp ô và công thức. Có biến thì hiện ô nhập; không có thì mở bảng sửa trực tiếp.</span></div>
+        <div><b>3</b><span>Mỗi kỳ sửa số liệu, ngày/tháng tự cập nhật, rồi bấm <b>Lưu &amp; tải xuống</b>.</span></div>
       </div>
       <p class="xl-note">${A.icon("alert")} Giữ định dạng ô, gộp ô, công thức và số liệu. Biểu đồ hoặc đối tượng đặc biệt trong mẫu có thể không được giữ.</p>
     </div>`;
@@ -801,6 +1458,7 @@
     if (busy) return `<div class="rp-dr-section">${busyHtml(busy.text)}</div>`;
     const suggesting = state.suggestion && state.suggestion.reportId === report.id;
     if (!report.excel || !report.excel.templateId || suggesting) return emptyHtml(report);
+    if (report.excel.mode === "grid") return gridTab(report);
     const draft = draftOf(report);
     return `<div class="rp-dr-section">
       ${errorHtml()}
@@ -839,7 +1497,10 @@
     if (save) {
       const reportId = save.getAttribute("data-id");
       const report = bridge() && bridge().report(reportId);
-      if (report) saveVersion(report);
+      if (report) {
+        if (report.excel && report.excel.mode === "grid") saveGridVersion(report);
+        else saveVersion(report);
+      }
       return;
     }
     const useSuggest = event.target.closest("[data-xl-use-suggest]");
@@ -847,6 +1508,51 @@
       const reportId = useSuggest.getAttribute("data-id");
       const report = bridge() && bridge().report(reportId);
       if (report) applySuggestion(report);
+      return;
+    }
+    const useGrid = event.target.closest("[data-xl-use-grid]");
+    if (useGrid) {
+      const reportId = useGrid.getAttribute("data-id");
+      const report = bridge() && bridge().report(reportId);
+      if (report) useGridSuggestion(report);
+      return;
+    }
+    const retryGrid = event.target.closest("[data-xl-grid-retry]");
+    if (retryGrid) {
+      const reportId = retryGrid.getAttribute("data-id");
+      state.gridFailed = null;
+      resetGrid(reportId);
+      if (bridge()) bridge().refreshDetail();
+      return;
+    }
+    const reloadGrid = event.target.closest("[data-xl-grid-reload]");
+    if (reloadGrid) {
+      const reportId = reloadGrid.getAttribute("data-id");
+      resetGrid(reportId);
+      state.gridFailed = null;
+      if (bridge()) bridge().refreshDetail();
+      A.toast("Đã bỏ các thay đổi chưa lưu và mở lại bảng.", "info");
+      return;
+    }
+    const colPage = event.target.closest("[data-xl-grid-colpage]");
+    if (colPage) {
+      const reportId = colPage.getAttribute("data-id");
+      const cache = state.grid && state.grid.reportId === reportId ? state.grid : null;
+      if (!cache) return;
+      const win = gridColumnWindow(cache);
+      cache.page = Math.min(Math.max(win.page + Number(colPage.getAttribute("data-xl-grid-colpage") || 0), 0), win.pages - 1);
+      cache.dayFocus = cache.page * 5;
+      if (bridge()) bridge().refreshDetail();
+      return;
+    }
+    const rowPage = event.target.closest("[data-xl-grid-rowpage]");
+    if (rowPage) {
+      const reportId = rowPage.getAttribute("data-id");
+      const cache = state.grid && state.grid.reportId === reportId ? state.grid : null;
+      if (!cache) return;
+      const win = gridRowWindow(cache);
+      cache.rowPage = Math.min(Math.max(win.page + Number(rowPage.getAttribute("data-xl-grid-rowpage") || 0), 0), win.pages - 1);
+      if (bridge()) bridge().refreshDetail();
       return;
     }
     const dismissSuggest = event.target.closest("[data-xl-dismiss-suggest]");
@@ -870,6 +1576,11 @@
   });
 
   document.addEventListener("input", (event) => {
+    const gridCell = event.target.closest("[data-xl-grid-cell]");
+    if (gridCell && state.grid) {
+      applyGridInput(state.grid, gridCell);
+      return;
+    }
     const field = event.target.closest("[data-xl-field]");
     if (field) {
       const reportId = field.getAttribute("data-id");
@@ -891,6 +1602,31 @@
   });
 
   document.addEventListener("change", (event) => {
+    const sheetPick = event.target.closest("[data-xl-grid-sheet]");
+    if (sheetPick && state.grid) {
+      const sheet = state.grid.workbook.getWorksheet(sheetPick.value);
+      if (sheet) {
+        prepareGridSheet(state.grid, sheet);
+        if (bridge()) bridge().refreshDetail();
+      }
+      return;
+    }
+    const dayPick = event.target.closest("[data-xl-grid-day]");
+    if (dayPick && state.grid) {
+      const index = Math.max(Number(dayPick.value || 0), 0);
+      state.grid.dayFocus = index;
+      state.grid.page = Math.floor(index / 5);
+      if (bridge()) bridge().refreshDetail();
+      return;
+    }
+    const pageInput = event.target.closest("[data-xl-grid-page-input]");
+    if (pageInput && state.grid) {
+      const win = gridColumnWindow(state.grid);
+      state.grid.page = Math.min(Math.max(Number(pageInput.value || 1), 1), win.pages) - 1;
+      state.grid.dayFocus = state.grid.page * 5;
+      if (bridge()) bridge().refreshDetail();
+      return;
+    }
     const toggle = event.target.closest("[data-xl-suggest]");
     if (toggle) {
       const suggestion = state.suggestion;
@@ -915,7 +1651,13 @@
     state.error = "";
     state.draft = Object.create(null);
     state.suggestion = null;
+    state.grid = null;
+    state.gridLoading = null;
+    state.gridFailed = null;
   });
 
   A.excelTab = excelTab;
+  if (A.excelBridge) {
+    A.excelBridge.regenerate = (report) => buildFresh(report, { download: false, toast: false });
+  }
 })();
