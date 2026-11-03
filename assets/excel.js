@@ -75,6 +75,7 @@
     busy: null,
     error: "",
     draft: Object.create(null),
+    suggestion: null,
     libPromise: null,
   };
 
@@ -259,6 +260,62 @@
     return "";
   }
 
+  function pairText(value) {
+    return readCellText(value).replace(/\s+/g, " ").trim();
+  }
+
+  function cellDisplay(value) {
+    if (typeof value === "number") return String(value);
+    if (value instanceof Date) return fmtDate(value.toISOString().slice(0, 10), "/");
+    return pairText(value);
+  }
+
+  function pairId(pair) {
+    return `${pair.sheet}!${pair.address}`;
+  }
+
+  function detectPairs(workbook) {
+    const pairs = [];
+    const used = new Set();
+    workbook.eachSheet((sheet) => {
+      sheet.eachRow({ includeEmpty: false }, (row) => {
+        const cells = [];
+        row.eachCell({ includeEmpty: false }, (cell, col) => cells.push({ cell, col }));
+        if (cells.length !== 2) return;
+        const [left, right] = cells;
+        if (right.col - left.col > 2) return;
+        const label = pairText(left.cell.value).replace(/[:\s]+$/, "");
+        if (label.length < 2 || label.length > 60 || !/\p{L}/u.test(label)) return;
+        if (!/\p{Ll}/u.test(label)) return;
+        if (/\bngày\b.*\btháng\b.*\bnăm\b/iu.test(label)) return;
+        const rawValue = right.cell.value;
+        if (rawValue && typeof rawValue === "object" && (rawValue.formula || rawValue.sharedFormula)) return;
+        const value = cellDisplay(rawValue);
+        if (!value || value.includes("{{")) return;
+        if (value.length > 80 || value === label) return;
+        const base = normalizeKey(label);
+        if (!base) return;
+        const builtin = BUILTIN_KEYS.get(base) || "";
+        let key = builtin || base;
+        if (!builtin) {
+          let n = 2;
+          while (used.has(key)) key = `${base}_${n++}`;
+        }
+        used.add(key);
+        pairs.push({
+          label,
+          key,
+          builtin,
+          sheet: sheet.name,
+          address: String(right.cell.address || ""),
+          value,
+          token: builtin ? `{{${BUILTIN_TOKEN[builtin]}}}` : `{{${key}}}`,
+        });
+      });
+    });
+    return pairs.slice(0, 40);
+  }
+
   async function inspectWorkbook(buffer) {
     const ExcelJS = await loadExcelJS();
     const workbook = new ExcelJS.Workbook();
@@ -290,12 +347,14 @@
         });
       });
     });
-    if (!fields.size && !builtins.size) {
-      throw new Error("Mẫu chưa có biến nào. Gõ dạng {{doanh_thu}} vào ô cần điền rồi tải lại.");
+    const suggestions = !fields.size && !builtins.size ? detectPairs(workbook) : [];
+    if (!fields.size && !builtins.size && !suggestions.length) {
+      throw new Error("Mẫu chưa có biến nào. Gõ dạng {{doanh_thu}} vào ô cần điền, hoặc dùng bảng có cặp nhãn – số liệu để GUỒNG tự tạo biến.");
     }
     return {
       fields: Array.from(fields.values()),
       builtins: Array.from(builtins),
+      suggestions,
       sheetNames: workbook.worksheets.map((sheet) => sheet.name).slice(0, 8),
     };
   }
@@ -390,6 +449,7 @@
 
   async function uploadTemplate(report, file) {
     if (!apiReady()) return;
+    state.suggestion = null;
     if (!/\.xlsx$/i.test(file.name)) {
       A.toast("Chỉ nhận tệp .xlsx. Tệp .xls hoặc .xlsm cần lưu lại thành .xlsx trước.", "error");
       return;
@@ -402,46 +462,105 @@
     try {
       const buffer = await file.arrayBuffer();
       const info = await inspectWorkbook(buffer);
+      if (!info.fields.length && !info.builtins.length) {
+        const pairs = info.suggestions || [];
+        state.suggestion = {
+          reportId: report.id,
+          fileName: file.name,
+          buffer,
+          pairs,
+          selected: new Set(pairs.map(pairId)),
+        };
+        state.busy = null;
+        state.error = "";
+        if (bridge()) bridge().refreshDetail();
+        A.toast(`Tệp chưa có biến. GUỒNG thấy ${pairs.length} cặp nhãn – số liệu, chọn rồi dùng làm mẫu.`, "info");
+        return;
+      }
       setBusy(report, "Đang lưu mẫu lên kho…");
-      const meta = await postFile(report, file, file.name, "excel-template");
-      const old = report.excel || {};
-      const values = {};
-      info.fields.forEach((field) => {
-        values[field.key] = old.values && Object.prototype.hasOwnProperty.call(old.values, field.key) ? String(old.values[field.key] ?? "") : "";
-      });
-      report.excel = {
-        templateId: meta.id,
-        templateName: meta.name,
-        templateSize: meta.size,
-        templateSheets: info.sheetNames,
-        fields: info.fields,
-        builtins: info.builtins,
-        values,
-        filenamePattern: String(old.filenamePattern || DEFAULT_PATTERN),
-        latestId: old.latestId || "",
-        latestName: old.latestName || "",
-        latestAt: old.latestAt || "",
-        latestSize: old.latestSize || 0,
-        lastSavedAt: old.lastSavedAt || "",
-        updatedAt: new Date().toISOString(),
-      };
-      delete state.draft[report.id];
-      const bridgeRef = bridge();
-      if (bridgeRef) {
-        bridgeRef.log(report, "excel", `Mẫu ${meta.name} · ${info.fields.length} biến`);
-        await bridgeRef.save(report);
-      }
-      if (old.templateId && old.templateId !== meta.id) {
-        deleteFile(old.templateId).catch(() => {});
-      }
-      state.busy = null;
-      if (bridgeRef) bridgeRef.refreshDetail();
-      A.toast(`Đã nhận mẫu “${meta.name}”.`, "success");
+      await installTemplate(report, buffer, file.name, info, {});
     } catch (err) {
       const hint = /zip|central directory|corrupt|end of data|signature/i.test(String(err && err.message))
         ? "Tệp không phải .xlsx hợp lệ. Mở bằng Excel rồi Lưu thành .xlsx."
         : err.message || "Chưa đọc được mẫu Excel.";
       setError(report, new Error(hint));
+    }
+  }
+
+  async function installTemplate(report, buffer, name, info, defaults) {
+    const meta = await postFile(report, new Blob([buffer], { type: XLSX_MIME }), name, "excel-template");
+    const old = report.excel || {};
+    const values = {};
+    info.fields.forEach((field) => {
+      const key = String(field.key);
+      if (defaults && Object.prototype.hasOwnProperty.call(defaults, key)) values[key] = String(defaults[key] ?? "");
+      else if (old.values && Object.prototype.hasOwnProperty.call(old.values, key)) values[key] = String(old.values[key] ?? "");
+      else values[key] = "";
+    });
+    report.excel = {
+      templateId: meta.id,
+      templateName: meta.name,
+      templateSize: meta.size,
+      templateSheets: info.sheetNames,
+      fields: info.fields,
+      builtins: info.builtins,
+      values,
+      filenamePattern: String(old.filenamePattern || DEFAULT_PATTERN),
+      latestId: old.latestId || "",
+      latestName: old.latestName || "",
+      latestAt: old.latestAt || "",
+      latestSize: old.latestSize || 0,
+      lastSavedAt: old.lastSavedAt || "",
+      updatedAt: new Date().toISOString(),
+    };
+    delete state.draft[report.id];
+    const bridgeRef = bridge();
+    if (bridgeRef) {
+      bridgeRef.log(report, "excel", `Mẫu ${meta.name} · ${info.fields.length} biến`);
+      await bridgeRef.save(report);
+    }
+    if (old.templateId && old.templateId !== meta.id) {
+      deleteFile(old.templateId).catch(() => {});
+    }
+    state.busy = null;
+    state.suggestion = null;
+    state.error = "";
+    if (bridgeRef) bridgeRef.refreshDetail();
+    A.toast(`Đã nhận mẫu “${meta.name}”.`, "success");
+  }
+
+  async function applySuggestion(report) {
+    if (!apiReady()) return;
+    const suggestion = state.suggestion;
+    if (!suggestion || suggestion.reportId !== report.id) return;
+    const selected = suggestion.pairs.filter((pair) => suggestion.selected.has(pairId(pair)));
+    if (!selected.length) {
+      A.toast("Chọn ít nhất một ô cần nhập lại mỗi kỳ.", "error");
+      return;
+    }
+    setBusy(report, "Đang tạo mẫu từ báo cáo…");
+    try {
+      const ExcelJS = await loadExcelJS();
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(suggestion.buffer);
+      selected.forEach((pair) => {
+        const sheet = workbook.getWorksheet(pair.sheet);
+        if (sheet) sheet.getCell(pair.address).value = pair.token;
+      });
+      workbook.calcProperties.fullCalcOnLoad = true;
+      const output = await workbook.xlsx.writeBuffer();
+      const info = await inspectWorkbook(output);
+      if (!info.fields.length && !info.builtins.length) {
+        throw new Error("Chưa tạo được biến từ các ô đã chọn. Thử chọn ô khác hoặc thêm {{ten_bien}} vào Excel.");
+      }
+      const defaults = {};
+      selected.forEach((pair) => {
+        if (!pair.builtin) defaults[pair.key] = pair.value;
+      });
+      setBusy(report, "Đang lưu mẫu lên kho…");
+      await installTemplate(report, output, suggestion.fileName, info, defaults);
+    } catch (err) {
+      setError(report, err);
     }
   }
 
@@ -511,20 +630,63 @@
     return `<div class="xl-busy"><span class="rp-spinner"></span><strong>${esc(text)}</strong><span>Đừng đóng bảng trong lúc GUỒNG xử lý.</span></div>`;
   }
 
+  function suggestionHtml(report) {
+    const suggestion = state.suggestion && state.suggestion.reportId === report.id ? state.suggestion : null;
+    if (!suggestion) return "";
+    const rows = suggestion.pairs
+      .map((pair) => {
+        const id = pairId(pair);
+        const checked = suggestion.selected.has(id);
+        const value = pair.value.length > 50 ? `${pair.value.slice(0, 50)}…` : pair.value;
+        return `<label class="xl-suggest-item">
+          <input type="checkbox" data-xl-suggest="${esc(id)}" data-id="${esc(report.id)}" ${checked ? "checked" : ""}>
+          <span class="xl-suggest-main">
+            <span class="xl-suggest-title"><b>${esc(pair.label)}</b>${pair.builtin ? `<i>tự động</i>` : ""}<code>${esc(pair.token)}</code></span>
+            <small>${esc(pair.sheet)} · ${esc(pair.address)} · ${esc(value)}</small>
+          </span>
+        </label>`;
+      })
+      .join("");
+    return `<div class="xl-suggest">
+      <div class="xl-suggest-head">
+        <span class="xl-head-ico">${A.icon("grid")}</span>
+        <div>
+          <h4>Tệp “${esc(suggestion.fileName)}” chưa có biến</h4>
+          <p>GUỒNG thấy ${suggestion.pairs.length} cặp nhãn – số liệu. Chọn ô cần nhập lại mỗi kỳ; số liệu hiện tại sẽ được điền sẵn cho kỳ sau.</p>
+        </div>
+      </div>
+      <div class="xl-suggest-list">${rows}</div>
+      <div class="xl-suggest-acts">
+        <button class="btn btn-ghost btn-sm" type="button" data-xl-dismiss-suggest data-id="${esc(report.id)}">Bỏ qua</button>
+        <button class="btn btn-accent btn-sm" type="button" data-xl-use-suggest data-id="${esc(report.id)}">${A.icon("check")} Dùng tệp này làm mẫu</button>
+      </div>
+    </div>`;
+  }
+
   function emptyHtml(report) {
+    if (state.suggestion && state.suggestion.reportId === report.id) {
+      return `<div class="rp-dr-section">
+        ${errorHtml()}
+        ${suggestionHtml(report)}
+        <div class="xl-suggest-alt">
+          <button class="btn btn-ghost btn-sm" type="button" data-xl-pick-template data-id="${esc(report.id)}">${A.icon("upload")} Chọn tệp khác</button>
+          <input type="file" data-xl-template-input data-id="${esc(report.id)}" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        </div>
+      </div>`;
+    }
     return `<div class="rp-dr-section">
       ${errorHtml()}
       <div class="xl-hero">
         <span class="xl-hero-ico">${A.icon("grid")}</span>
         <div class="xl-hero-main">
           <h4>Báo cáo Excel lặp lại</h4>
-          <p>Tải mẫu <b>.xlsx</b> một lần. GUỒNG dò các biến <code>{{ten_bien}}</code>, tạo form nhập và giữ số liệu cho kỳ sau.</p>
+          <p>Tải mẫu <b>.xlsx</b> một lần. GUỒNG dò biến <code>{{ten_bien}}</code>, hoặc tự nhận diện cặp nhãn – số liệu trong báo cáo cũ, rồi giữ số liệu cho kỳ sau.</p>
         </div>
         <button class="btn btn-accent" type="button" data-xl-pick-template data-id="${esc(report.id)}">${A.icon("upload")} Chọn mẫu .xlsx</button>
         <input type="file" data-xl-template-input data-id="${esc(report.id)}" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       </div>
       <div class="xl-guide">
-        <div><b>1</b><span>Mở file Excel mẫu, gõ <code>{{ngay}}</code>, <code>{{du_an}}</code>, <code>{{doanh_thu}}</code> vào ô cần điền.</span></div>
+        <div><b>1</b><span>Mở file Excel mẫu và gõ <code>{{ngay}}</code>, <code>{{du_an}}</code>, <code>{{doanh_thu}}</code> vào ô cần điền — hoặc tải lên báo cáo cũ có cặp nhãn – số liệu.</span></div>
         <div><b>2</b><span>Tải mẫu lên đây. Các biến thành ô nhập, định dạng và công thức của mẫu được giữ nguyên.</span></div>
         <div><b>3</b><span>Mỗi kỳ mở báo cáo, nhập số liệu, xem tên tệp rồi bấm <b>Lưu &amp; tải xuống</b>.</span></div>
       </div>
@@ -637,7 +799,8 @@
     if (!report) return "";
     const busy = state.busy && state.busy.id === report.id ? state.busy : null;
     if (busy) return `<div class="rp-dr-section">${busyHtml(busy.text)}</div>`;
-    if (!report.excel || !report.excel.templateId) return emptyHtml(report);
+    const suggesting = state.suggestion && state.suggestion.reportId === report.id;
+    if (!report.excel || !report.excel.templateId || suggesting) return emptyHtml(report);
     const draft = draftOf(report);
     return `<div class="rp-dr-section">
       ${errorHtml()}
@@ -679,6 +842,20 @@
       if (report) saveVersion(report);
       return;
     }
+    const useSuggest = event.target.closest("[data-xl-use-suggest]");
+    if (useSuggest) {
+      const reportId = useSuggest.getAttribute("data-id");
+      const report = bridge() && bridge().report(reportId);
+      if (report) applySuggestion(report);
+      return;
+    }
+    const dismissSuggest = event.target.closest("[data-xl-dismiss-suggest]");
+    if (dismissSuggest) {
+      state.suggestion = null;
+      state.error = "";
+      if (bridge()) bridge().refreshDetail();
+      return;
+    }
     const reset = event.target.closest("[data-xl-reset]");
     if (reset) {
       const reportId = reset.getAttribute("data-id");
@@ -714,6 +891,15 @@
   });
 
   document.addEventListener("change", (event) => {
+    const toggle = event.target.closest("[data-xl-suggest]");
+    if (toggle) {
+      const suggestion = state.suggestion;
+      if (!suggestion) return;
+      const id = toggle.getAttribute("data-xl-suggest");
+      if (toggle.checked) suggestion.selected.add(id);
+      else suggestion.selected.delete(id);
+      return;
+    }
     const input = event.target.closest("[data-xl-template-input]");
     if (!input) return;
     const file = input.files && input.files[0];
@@ -728,6 +914,7 @@
     state.busy = null;
     state.error = "";
     state.draft = Object.create(null);
+    state.suggestion = null;
   });
 
   A.excelTab = excelTab;

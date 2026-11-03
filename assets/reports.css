@@ -1290,6 +1290,40 @@ body.sidebar-open .rp-bee { opacity: 0; pointer-events: none; transform: transla
 }
 .xl-error .ico { width: 14px; height: 14px; flex: none; margin-top: 1px; }
 
+.xl-suggest {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--card);
+}
+.xl-suggest-head { display: flex; align-items: flex-start; gap: 10px; }
+.xl-suggest-head .xl-head-ico { flex: none; }
+.xl-suggest-head h4 { margin: 0; font-size: 13px; font-weight: 700; line-height: 1.45; overflow-wrap: anywhere; }
+.xl-suggest-head p { margin: 3px 0 0; font-size: 10.5px; line-height: 1.55; color: var(--muted); }
+.xl-suggest-list {
+  display: flex; flex-direction: column; gap: 3px;
+  max-height: 270px; overflow: auto; padding-right: 2px;
+}
+.xl-suggest-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 7px 8px; border-radius: var(--r-sm); cursor: pointer;
+}
+.xl-suggest-item:hover { background: var(--card-2); }
+.xl-suggest-item input { flex: none; margin-top: 2px; accent-color: var(--accent); }
+.xl-suggest-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.xl-suggest-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; }
+.xl-suggest-title b { font-weight: 650; }
+.xl-suggest-title i {
+  font-style: normal; font-size: 8.5px; font-weight: 700;
+  color: var(--ok); background: var(--ok-soft); padding: 1px 5px; border-radius: 999px;
+}
+.xl-suggest-title code { font-family: var(--mono); font-size: 9px; color: var(--accent); }
+.xl-suggest-main small {
+  font-size: 9px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.xl-suggest-acts { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+.xl-suggest-alt { display: flex; justify-content: center; }
+
 @media (max-width: 620px) {
   .xl-field-grid { grid-template-columns: 1fr; }
   .xl-hero { padding: 13px; }
@@ -1298,4 +1332,5 @@ body.sidebar-open .rp-bee { opacity: 0; pointer-events: none; transform: transla
   .xl-save-acts { width: 100%; margin-left: 0; }
   .xl-save-acts .btn { flex: 1; justify-content: center; }
   .xl-chip span { max-width: 150px; }
+  .xl-suggest-acts .btn { flex: 1; justify-content: center; }
 }
