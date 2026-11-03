@@ -83,6 +83,7 @@
     grid: null,
     gridLoading: null,
     gridFailed: null,
+    aiScan: null,
   };
 
   function bridge() {
@@ -771,7 +772,10 @@
 
   /* ---------- chế độ sửa bảng trực tiếp ---------- */
   function resetGrid(reportId) {
-    if (!reportId || (state.grid && state.grid.reportId === reportId)) state.grid = null;
+    if (!reportId || (state.grid && state.grid.reportId === reportId)) {
+      state.grid = null;
+      state.aiScan = null;
+    }
   }
 
   function parseAddress(address) {
@@ -1013,6 +1017,153 @@
     return `<div class="xl-grid-wrap"><table class="xl-grid-table">${head}<tbody>${body}</tbody></table></div>`;
   }
 
+  /* ---------- AI phối hợp nhận diện cấu trúc tệp ---------- */
+
+  function postJson(url, payload) {
+    return fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(async (res) => {
+      const type = res.headers.get("content-type") || "";
+      if (!type.includes("application/json")) throw new Error("API chưa sẵn sàng trên địa chỉ này.");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Máy chủ trả về ${res.status}`);
+      return data;
+    });
+  }
+
+  function columnName(col) {
+    let name = "";
+    let n = Math.max(1, Number(col) || 1);
+    while (n > 0) {
+      const rem = (n - 1) % 26;
+      name = String.fromCharCode(65 + rem) + name;
+      n = Math.floor((n - 1) / 26);
+    }
+    return name;
+  }
+
+  function sampleSheetText(sheet, maxRow, maxCol, dayGroups) {
+    const out = [];
+    const seen = new Set();
+    const push = (row, col) => {
+      if (row < 1 || col < 1) return;
+      const key = `${row}:${col}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      let text = pairText(sheet.getCell(row, col).value);
+      if (!text) return;
+      if (text.length > 80) text = `${text.slice(0, 80)}…`;
+      out.push({ a: `${columnName(col)}${row}`, t: text });
+    };
+    const headRows = Math.min(maxRow, 14);
+    const headCols = Math.min(maxCol, 12);
+    for (let r = 1; r <= headRows; r += 1) {
+      for (let c = 1; c <= headCols; c += 1) push(r, c);
+    }
+    const first = dayGroups && dayGroups[0];
+    if (first && Number(first.col) > headCols) {
+      const toCol = Math.min(maxCol, Number(first.col) + 8);
+      for (let r = 1; r <= Math.min(maxRow, 10); r += 1) {
+        for (let c = Number(first.col); c <= toCol; c += 1) push(r, c);
+      }
+    }
+    return out.slice(0, 160);
+  }
+
+  function buildRecognizePayload(report) {
+    const excel = report.excel || {};
+    const payload = {
+      report: {
+        title: String(report.title || ""),
+        date: String(report.date || ""),
+        category: String(report.category || ""),
+      },
+      excel: {
+        mode: String(excel.mode || ""),
+        gridSheet: String(excel.gridSheet || ""),
+        gridDate: String(excel.gridDate || ""),
+        dateGuess: "",
+        monthGuess: "",
+        sheetNames: (Array.isArray(excel.templateSheets) ? excel.templateSheets : []).slice(0, 20),
+        dayGroups: [],
+        fields: (Array.isArray(excel.fields) ? excel.fields : [])
+          .slice(0, 30)
+          .map((f) => ({ key: f.key, label: f.label, count: f.count })),
+        samples: [],
+      },
+    };
+    const cache = state.grid && state.grid.reportId === report.id ? state.grid : null;
+    if (cache && cache.sheetRef) {
+      payload.excel.gridSheet = cache.sheet;
+      payload.excel.dayGroups = cache.dayGroups.slice(0, 10).map((g) => ({ label: g.label, col: g.col }));
+      payload.excel.samples = sampleSheetText(cache.sheetRef, cache.maxRow, cache.maxCol, cache.dayGroups);
+    }
+    return payload;
+  }
+
+  async function runAiScan(reportId) {
+    const bridgeRef = bridge();
+    const report = bridgeRef && bridgeRef.report(reportId);
+    if (!report) return;
+    if (state.aiScan && state.aiScan.id === reportId && state.aiScan.status === "busy") return;
+    state.aiScan = { id: reportId, status: "busy", result: null, message: "" };
+    if (bridgeRef) bridgeRef.refreshDetail();
+    try {
+      const data = await postJson("/api/ai/recognize-excel", buildRecognizePayload(report));
+      state.aiScan = { id: reportId, status: "done", result: data, message: "" };
+    } catch (err) {
+      state.aiScan = { id: reportId, status: "error", result: null, message: (err && err.message) || "AI chưa phản hồi." };
+    }
+    if (bridge()) bridge().refreshDetail();
+  }
+
+  function aiScanHtml(report) {
+    const scan = state.aiScan;
+    if (!scan || scan.id !== report.id) return "";
+    if (scan.status === "busy") {
+      return `<div class="xl-ai is-busy">${A.icon("spark")}<span>AI đang đọc cấu trúc tệp…</span></div>`;
+    }
+    if (scan.status === "error") {
+      return `<div class="xl-ai is-error">${A.icon("alert")}<span>${esc(scan.message || "AI chưa phản hồi.")}</span>
+        <button class="btn btn-ghost btn-sm" type="button" data-xl-ai-dismiss data-id="${esc(report.id)}">Đóng</button></div>`;
+    }
+    const result = scan.result || {};
+    const cache = state.grid && state.grid.reportId === report.id ? state.grid : null;
+    const excel = report.excel || {};
+    const actions = [];
+    if (cache && result.gridSheet && result.gridSheet !== cache.sheet && cache.workbook.getWorksheet(result.gridSheet)) {
+      actions.push(
+        `<button class="btn btn-ghost btn-sm" type="button" data-xl-ai-use-sheet data-id="${esc(report.id)}" data-value="${esc(result.gridSheet)}">${A.icon("check")} Dùng sheet “${esc(result.gridSheet)}”</button>`
+      );
+    }
+    if (excel.mode === "grid" && /^\d{4}-\d{2}-\d{2}$/.test(String(result.dateAnchor || "")) && result.dateAnchor !== excel.gridDate) {
+      actions.push(
+        `<button class="btn btn-ghost btn-sm" type="button" data-xl-ai-use-date data-id="${esc(report.id)}" data-value="${esc(result.dateAnchor)}">${A.icon("check")} Mốc ngày ${esc(result.dateAnchor)}</button>`
+      );
+    }
+    const list = (items, cls) =>
+      Array.isArray(items) && items.length
+        ? `<ul class="xl-ai-list ${cls}">${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`
+        : "";
+    const confidence = Math.max(0, Math.min(100, Number(result.confidence) || 0));
+    const confClass = confidence >= 70 ? "is-good" : confidence >= 40 ? "is-mid" : "is-low";
+    return `<div class="xl-ai">
+      <div class="xl-ai-head">
+        ${A.icon("spark")}<strong>AI nhận diện</strong>
+        <span class="xl-ai-conf ${confClass}">${confidence}%</span>
+        <button class="icon-btn bare" type="button" data-xl-ai-dismiss data-id="${esc(report.id)}" aria-label="Đóng">${A.icon("x")}</button>
+      </div>
+      ${result.summary ? `<p class="xl-ai-summary">${esc(result.summary)}</p>` : ""}
+      ${list(result.inputAreas, "is-input")}
+      ${list(result.warnings, "is-warn")}
+      ${list(result.suggestions, "is-tip")}
+      ${actions.length ? `<div class="xl-ai-acts">${actions.join("")}</div>` : ""}
+    </div>`;
+  }
+
   function gridTab(report) {
     const excel = report.excel || {};
     const cache = state.grid && state.grid.reportId === report.id ? state.grid : null;
@@ -1069,6 +1220,7 @@
       : "";
     return `<div class="rp-dr-section">
       ${errorHtml()}
+      ${aiScanHtml(report)}
       <div class="xl-head">
         <span class="xl-head-ico">${A.icon("grid")}</span>
         <div class="xl-head-main">
@@ -1080,6 +1232,7 @@
         <div class="xl-head-acts">
           <a class="btn btn-ghost btn-sm" href="${fileUrl(excel.templateId, true)}" title="Tải tệp gốc">${A.icon("download")} Gốc</a>
           <button class="btn btn-ghost btn-sm" type="button" data-xl-pick-template data-id="${esc(report.id)}">${A.icon("refresh")} Đổi mẫu</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-xl-ai-scan data-id="${esc(report.id)}">${A.icon("spark")} AI nhận diện</button>
         </div>
         <input type="file" data-xl-template-input data-id="${esc(report.id)}" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       </div>
@@ -1383,6 +1536,7 @@
       <div class="xl-head-acts">
         <a class="btn btn-ghost btn-sm" href="${fileUrl(excel.templateId, true)}" title="Tải tệp mẫu">${A.icon("download")} Mẫu</a>
         <button class="btn btn-ghost btn-sm" type="button" data-xl-pick-template data-id="${esc(report.id)}">${A.icon("refresh")} Đổi mẫu</button>
+        <button class="btn btn-ghost btn-sm" type="button" data-xl-ai-scan data-id="${esc(report.id)}">${A.icon("spark")} AI nhận diện</button>
       </div>
       <input type="file" data-xl-template-input data-id="${esc(report.id)}" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
     </div>`;
@@ -1482,6 +1636,7 @@
     return `<div class="rp-dr-section">
       ${errorHtml()}
       ${templateHeadHtml(report)}
+      ${aiScanHtml(report)}
       ${builtinsHtml(report)}
       ${fieldsHtml(report, draft)}
       ${filenameHtml(report, draft)}
@@ -1534,6 +1689,47 @@
       const reportId = useGrid.getAttribute("data-id");
       const report = bridge() && bridge().report(reportId);
       if (report) useGridSuggestion(report);
+      return;
+    }
+    const aiScanBtn = event.target.closest("[data-xl-ai-scan]");
+    if (aiScanBtn) {
+      runAiScan(aiScanBtn.getAttribute("data-id"));
+      return;
+    }
+    const aiUseSheet = event.target.closest("[data-xl-ai-use-sheet]");
+    if (aiUseSheet) {
+      const reportId = aiUseSheet.getAttribute("data-id");
+      const cache = state.grid && state.grid.reportId === reportId ? state.grid : null;
+      const report = bridge() && bridge().report(reportId);
+      if (cache && report) {
+        const sheet = cache.workbook.getWorksheet(aiUseSheet.getAttribute("data-value"));
+        if (sheet) {
+          prepareGridSheet(cache, sheet);
+          report.excel = Object.assign({}, report.excel, { gridSheet: sheet.name });
+          bridge().save(report).catch(() => {});
+          if (bridge()) bridge().refreshDetail();
+          A.toast(`Đã đổi sang sheet “${sheet.name}”.`, "success");
+        }
+      }
+      return;
+    }
+    const aiUseDate = event.target.closest("[data-xl-ai-use-date]");
+    if (aiUseDate) {
+      const reportId = aiUseDate.getAttribute("data-id");
+      const dateAnchor = aiUseDate.getAttribute("data-value");
+      const report = bridge() && bridge().report(reportId);
+      if (report && /^\d{4}-\d{2}-\d{2}$/.test(dateAnchor)) {
+        report.excel = Object.assign({}, report.excel, { gridDate: dateAnchor });
+        if (bridge()) bridge().save(report).catch(() => {});
+        if (bridge()) bridge().refreshDetail();
+        A.toast(`Đã đặt mốc ngày ${dateAnchor}.`, "success");
+      }
+      return;
+    }
+    const aiDismiss = event.target.closest("[data-xl-ai-dismiss]");
+    if (aiDismiss) {
+      state.aiScan = null;
+      if (bridge()) bridge().refreshDetail();
       return;
     }
     const retryGrid = event.target.closest("[data-xl-grid-retry]");

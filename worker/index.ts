@@ -675,6 +675,21 @@ const ZALO_SCHEMA: GeminiSchema = {
   ],
 };
 
+const EXCEL_RECOGNIZE_SCHEMA: GeminiSchema = {
+  type: "OBJECT",
+  properties: {
+    mode: { type: "STRING" },
+    gridSheet: { type: "STRING" },
+    dateAnchor: { type: "STRING" },
+    confidence: { type: "NUMBER" },
+    summary: { type: "STRING" },
+    inputAreas: { type: "ARRAY", items: { type: "STRING" } },
+    warnings: { type: "ARRAY", items: { type: "STRING" } },
+    suggestions: { type: "ARRAY", items: { type: "STRING" } },
+  },
+  required: ["mode", "gridSheet", "dateAnchor", "confidence", "summary", "inputAreas", "warnings", "suggestions"],
+};
+
 function sseStream(env: Env, key: string) {
   let cancelled = false;
   const stream = new ReadableStream({
@@ -1586,6 +1601,62 @@ Xuất ra dạng JSON đúng định dạng schema.`;
       return json(await geminiJson(env, prompt, ZALO_SCHEMA));
     } catch (err: any) {
       return json({ error: "Không thể phân tách tin nhắn Zalo. Vui lòng thử lại.", details: err?.message }, 500);
+    }
+  }
+
+  if (path === "/api/ai/recognize-excel" && request.method === "POST") {
+    const body: any = await request.json().catch(() => ({}));
+    const report = body?.report || {};
+    const info = body?.excel || {};
+    const sheetNames = Array.isArray(info.sheetNames) ? info.sheetNames.map((s: unknown) => String(s).slice(0, 80)).slice(0, 20) : [];
+    const anchor = String(info.gridDate || info.dateGuess || info.monthGuess || report.date || "").slice(0, 20);
+    const fallback = {
+      mode: info.mode === "tokens" ? "tokens" : "grid",
+      gridSheet: String(info.gridSheet || sheetNames[0] || "").slice(0, 80),
+      dateAnchor: anchor,
+      confidence: 50,
+      summary: "Worker chưa cấu hình GEMINI_API_KEY nên chỉ trả về nhận diện cơ bản từ dữ liệu đã gửi.",
+      inputAreas: [],
+      warnings: [],
+      suggestions: ["Cấu hình GEMINI_API_KEY trên Worker để AI nhận diện đầy đủ cấu trúc tệp."],
+    };
+    if (!env.GEMINI_API_KEY) return json(fallback);
+    const dayGroups = Array.isArray(info.dayGroups) ? info.dayGroups.slice(0, 10) : [];
+    const fields = Array.isArray(info.fields)
+      ? info.fields.slice(0, 30).map((f: any) => ({ key: String(f?.key || "").slice(0, 60), label: String(f?.label || "").slice(0, 80), count: Number(f?.count) || 0 }))
+      : [];
+    const samples = Array.isArray(info.samples) ? info.samples.slice(0, 160) : [];
+    const prompt = `Bạn là trợ lý AI của GUỒNG — ứng dụng quản lý báo cáo dùng tệp Excel làm mẫu, có 2 chế độ: "tokens" (tệp chứa biến {{...}} cần điền) và "grid" (bảng nhật ký/chấm công sửa trực tiếp, thường phân cột theo nhóm "Ngày ..."; GUỒNG tự thay ngày/tháng trong tệp theo mốc ngày khi lưu bản mới).
+
+Ngươì dùng đang ở bước "Excel mẫu" với một tệp CÓ THỂ KHÔNG giống mẫu thông thường (tên sheet lạ, bố cục lạ, nhiều bảng trên một sheet). Hệ thống đã nhận diện sơ bộ; bạn hãy KIỂM TRA, XÁC NHẬN hoặc SỬA để ngươì dùng thao tác đúng. Không bịa dữ liệu không có trong mẫu nội dung.
+
+Ngữ cảnh báo cáo:
+- Tiêu đề: "${clip(String(report.title || ""), 120)}"
+- Ngày báo cáo: "${clip(String(report.date || ""), 20)}"
+- Danh mục: "${clip(String(report.category || ""), 60)}"
+- Chế độ hệ thống đang dùng: "${clip(String(info.mode || ""), 20)}"
+
+Nhận diện sơ bộ của hệ thống:
+- Sheet đang làm bảng: "${clip(String(info.gridSheet || ""), 80)}"
+- Mốc ngày đang dùng: "${clip(anchor, 20)}"
+- Các sheet trong tệp: ${JSON.stringify(sheetNames)}
+- Nhóm cột "Ngày ..." phát hiện (nhãn + cột bắt đầu): ${JSON.stringify(dayGroups)}
+- Biến {{...}} phát hiện: ${JSON.stringify(fields)}
+- Nội dung mẫu (ô: địa chỉ + chữ): ${JSON.stringify(samples)}
+
+Trả về JSON đúng schema:
+1. "mode": "grid" nếu đây là bảng nhập trực tiếp, "tokens" nếu tệp dùng biến {{...}}, "unclear" nếu không chắc.
+2. "gridSheet": tên sheet ĐÚNG nhất chứa bảng cần nhập — phải là một trong các sheet đã liệt kê; giữ nguyên giá trị hệ thống nếu đã đúng.
+3. "dateAnchor": mốc ngày YYYY-MM-DD. Ưu tiên: ngày đầy đủ trong tệp; nếu chỉ có "THÁNG m/yyyy" thì lấy ngày 01 của tháng đó; nếu không có gì thì dùng ngày báo cáo.
+4. "confidence": độ tin cậy 0-100.
+5. "summary": 2-4 câu tiếng Việt — tệp này là gì và dùng thế nào.
+6. "inputAreas": mảng mô tả vùng cần nhập tay (ví dụ "Cột D–H dưới mỗi nhóm Ngày: sản lượng"; nếu mode=tokens thì liệt kê biến + ý nghĩa).
+7. "warnings": mảng cảnh báo rủi ro (không thấy nhóm Ngày, ô công thức nằm trong vùng nhập, nhiều bảng trộn một sheet, mốc ngày không khớp...).
+8. "suggestions": mảng gợi ý thao tác tiếp theo cho ngườι dùng.`.slice(0, 9000);
+    try {
+      return json(await geminiJson(env, prompt, EXCEL_RECOGNIZE_SCHEMA));
+    } catch (err: any) {
+      return json({ error: "Không thể nhận diện tệp Excel. Vui lòng thử lại.", details: err?.message }, 500);
     }
   }
 

@@ -1394,6 +1394,38 @@ body.sidebar-open .rp-bee { opacity: 0; pointer-events: none; transform: transla
 .xl-grid-hint .ico { width: 12px; height: 12px; flex: none; margin-top: 1px; color: var(--accent); }
 .xl-save .btn.is-dirty { box-shadow: 0 0 0 3px var(--accent-soft); }
 
+.xl-ai {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 11px 13px; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--card-2);
+}
+.xl-ai.is-busy,
+.xl-ai.is-error {
+  flex-direction: row; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--muted);
+}
+.xl-ai.is-busy .ico { width: 14px; height: 14px; color: var(--accent); }
+.xl-ai.is-error { border-color: var(--danger, #d05555); color: var(--ink-2); }
+.xl-ai.is-error .ico { width: 14px; height: 14px; color: var(--danger, #d05555); }
+.xl-ai.is-error .btn { margin-left: auto; }
+.xl-ai-head { display: flex; align-items: center; gap: 7px; }
+.xl-ai-head .ico { width: 14px; height: 14px; color: var(--accent); }
+.xl-ai-head strong { font-size: 11.5px; font-weight: 750; }
+.xl-ai-head .icon-btn { margin-left: auto; }
+.xl-ai-conf {
+  padding: 1px 7px; border-radius: 99px;
+  font-size: 9px; font-weight: 700;
+}
+.xl-ai-conf.is-good { background: rgba(46, 160, 103, 0.14); color: #2ea067; }
+.xl-ai-conf.is-mid { background: rgba(217, 155, 32, 0.16); color: #b97f14; }
+.xl-ai-conf.is-low { background: rgba(208, 85, 85, 0.14); color: #d05555; }
+.xl-ai-summary { margin: 0; font-size: 11px; line-height: 1.6; color: var(--ink-2); white-space: pre-wrap; }
+.xl-ai-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; line-height: 1.5; }
+.xl-ai-list.is-input li::marker { color: var(--accent); }
+.xl-ai-list.is-warn { color: #b97f14; }
+.xl-ai-list.is-tip { color: var(--muted); }
+.xl-ai-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
 @media (max-width: 620px) {
   .xl-grid-wrap { max-height: 50vh; }
   .xl-grid-bar { gap: 6px; }
