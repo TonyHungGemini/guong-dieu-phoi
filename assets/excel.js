@@ -486,7 +486,9 @@
     if (!id) throw new Error("Chưa có tệp Excel để mở.");
     const res = await fetch(fileUrl(id, true), { credentials: "same-origin", cache: "no-store" });
     if (!res.ok) {
-      throw new Error(res.status === 404 ? "Tệp Excel không còn trong kho. Hãy tải lại tệp gốc." : `Không tải được tệp Excel (${res.status}).`);
+      const err = new Error(res.status === 404 ? "Tệp Excel không còn trong kho. Hãy tải lại tệp gốc hoặc đổi tệp mẫu." : `Không tải được tệp Excel (${res.status}).`);
+      err.status = res.status;
+      throw err;
     }
     return res.arrayBuffer();
   }
@@ -834,13 +836,30 @@
 
   async function loadGrid(report) {
     const excel = report.excel || {};
-    const baseId = excel.latestId || excel.templateId;
+    let baseId = excel.latestId || excel.templateId;
     if (!baseId) throw new Error("Báo cáo chưa có tệp Excel.");
     if (state.grid && state.grid.reportId === report.id && state.grid.baseId === baseId) return state.grid;
     if (state.gridLoading && state.gridLoading.id === report.id) return state.gridLoading.promise;
     const promise = (async () => {
       const ExcelJS = await loadExcelJS();
-      const buffer = await fetchFileBuffer(baseId);
+      let buffer = null;
+      try {
+        buffer = await fetchFileBuffer(baseId);
+      } catch (err) {
+        const canFallback = err && err.status === 404 && excel.latestId && excel.templateId && baseId === excel.latestId;
+        if (!canFallback) throw err;
+        buffer = await fetchFileBuffer(excel.templateId);
+        report.excel = Object.assign({}, report.excel, {
+          latestId: "",
+          latestName: "",
+          latestAt: "",
+          latestSize: 0,
+          latestVersion: 0,
+        });
+        const bridgeRef = bridge();
+        if (bridgeRef) bridgeRef.save(report).catch(() => {});
+        baseId = excel.templateId;
+      }
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(buffer);
       const target =
