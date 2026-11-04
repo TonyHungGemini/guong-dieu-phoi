@@ -880,6 +880,11 @@
         page: 0,
         rowPage: 0,
         dirty: false,
+        sel: null,
+        active: null,
+        dragging: false,
+        maxed: false,
+        calc: new Map(),
       };
       prepareGridSheet(cache, target);
       state.grid = cache;
@@ -947,6 +952,9 @@
   function gridCellHtml(cache, row, col, colspan, rowspan) {
     const cell = cache.sheetRef.getCell(row, col);
     const spanAttr = `${rowspan > 1 ? ` rowspan="${rowspan}"` : ""}${colspan > 1 ? ` colspan="${colspan}"` : ""}`;
+    const selected = cache.sel && row >= cache.sel.r1 && row <= cache.sel.r2 && col >= cache.sel.c1 && col <= cache.sel.c2;
+    const active = cache.active && cache.active.row === row && cache.active.col === col;
+    const selCls = `${selected ? " is-sel" : ""}${active ? " is-active" : ""}`;
     const value = cell.value;
     if (value && typeof value === "object" && (value.formula || value.sharedFormula)) {
       const result = value.result;
@@ -954,11 +962,11 @@
       if (result instanceof Date) shown = fmtDate(result.toISOString().slice(0, 10), "/");
       else if (result !== undefined && result !== null) shown = String(result);
       const title = `Công thức =${value.formula || value.sharedFormula || ""}`;
-      return `<td${spanAttr} class="xl-grid-ro" title="${esc(title)}">${esc(shown)}</td>`;
+      return `<td${spanAttr} class="xl-grid-ro${selCls}" data-xl-cell="${row}:${col}" data-xl-fcell="${row}:${col}" title="${esc(title)}">${esc(shown)}</td>`;
     }
     if (value instanceof Date) {
       const iso = value.toISOString().slice(0, 10);
-      return `<td${spanAttr} class="xl-grid-ro xl-grid-date" title="Tự đổi theo ngày báo cáo">${esc(fmtDate(iso, "/"))}</td>`;
+      return `<td${spanAttr} class="xl-grid-ro xl-grid-date${selCls}" data-xl-cell="${row}:${col}" title="Tự đổi theo ngày báo cáo">${esc(fmtDate(iso, "/"))}</td>`;
     }
     let text = "";
     let kind = "s";
@@ -975,7 +983,7 @@
     } else if (value && typeof value === "object" && typeof value.text === "string") {
       text = value.text;
     }
-    return `<td${spanAttr} class="xl-grid-edit"><input class="xl-grid-input${kind === "n" ? " is-num" : ""}" data-xl-grid-cell="${row}:${col}" data-xl-kind="${kind}" value="${esc(text)}" inputmode="${kind === "n" ? "decimal" : "text"}" autocomplete="off" spellcheck="false"></td>`;
+    return `<td${spanAttr} class="xl-grid-edit${selCls}" data-xl-cell="${row}:${col}"><input class="xl-grid-input${kind === "n" ? " is-num" : ""}" data-xl-grid-cell="${row}:${col}" data-xl-kind="${kind}" value="${esc(text)}" inputmode="${kind === "n" ? "decimal" : "text"}" autocomplete="off" spellcheck="false"></td>`;
   }
 
   function gridTableHtml(cache) {
@@ -1014,7 +1022,614 @@
       }
       body += `<tr><th class="xl-grid-rowno">${row}</th>${cells}</tr>`;
     }
-    return `<div class="xl-grid-wrap"><table class="xl-grid-table">${head}<tbody>${body}</tbody></table></div>`;
+    return `<div class="xl-grid-wrap${cache.maxed ? " is-max" : ""}"><table class="xl-grid-table">${head}<tbody>${body}</tbody></table></div>`;
+  }
+
+  /* ---------- chọn ô, sao chép/dán, tự tính công thức ---------- */
+
+  function parseNum(value) {
+    let raw = String(value == null ? "" : value).trim();
+    if (!raw) return null;
+    let sign = 1;
+    if (raw[0] === "-" || raw[0] === "−") {
+      sign = -1;
+      raw = raw.slice(1);
+    } else if (raw[0] === "+") {
+      raw = raw.slice(1);
+    }
+    raw = raw.replace(/\s+/g, "");
+    if (!/^\d[\d.,]*$/.test(raw)) return null;
+    const lastDot = raw.lastIndexOf(".");
+    const lastComma = raw.lastIndexOf(",");
+    let decimal = -1;
+    if (lastDot >= 0 && lastComma >= 0) {
+      decimal = Math.max(lastDot, lastComma);
+    } else if (lastComma >= 0) {
+      if (!/^\d{1,3}(,\d{3}){2,}$/.test(raw)) decimal = lastComma;
+    } else if (lastDot >= 0) {
+      if (!/^\d{1,3}(\.\d{3})+$/.test(raw)) decimal = lastDot;
+    }
+    let digits = "";
+    for (let index = 0; index < raw.length; index += 1) {
+      const ch = raw[index];
+      if (ch >= "0" && ch <= "9") digits += ch;
+      else if (index === decimal) digits += ".";
+    }
+    if (!digits || !/\d/.test(digits)) return null;
+    const num = Number(digits) * sign;
+    return Number.isFinite(num) ? num : null;
+  }
+
+  function looksNumericText(value) {
+    const raw = String(value == null ? "" : value).trim();
+    if (!raw) return false;
+    if (!/^[-+−]?[\d.,\s]+$/.test(raw)) return false;
+    if (/^[-+−]?0\d/.test(raw)) return false;
+    return parseNum(raw) !== null;
+  }
+
+  function readCellRawText(value) {
+    if (value === null || value === undefined) return "";
+    if (value instanceof Date) return fmtDate(value.toISOString().slice(0, 10), "/");
+    if (typeof value === "number") return String(value);
+    if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+    if (typeof value === "string") return value;
+    if (typeof value === "object" && Array.isArray(value.richText)) return readCellText(value);
+    if (typeof value === "object" && typeof value.text === "string") return value.text;
+    if (typeof value === "object" && (value.formula || value.sharedFormula)) {
+      return value.result === undefined || value.result === null ? "" : String(value.result);
+    }
+    return "";
+  }
+
+  function coerceCellText(text, cell) {
+    const raw = String(text == null ? "" : text);
+    if (raw === "") return null;
+    if (cell.value && typeof cell.value === "object" && Array.isArray(cell.value.richText)) {
+      const font = (cell.value.richText[0] || {}).font;
+      return { richText: [{ font: font ? Object.assign({}, font) : undefined, text: raw }] };
+    }
+    const num = looksNumericText(raw) ? parseNum(raw) : null;
+    return num === null ? raw : num;
+  }
+
+  function cellAddressLabel(row, col) {
+    return `${columnName(col)}${row}`;
+  }
+
+  function gridRange(cache) {
+    return cache.sel
+      ? {
+          r1: Math.min(cache.sel.r1, cache.sel.r2),
+          r2: Math.max(cache.sel.r1, cache.sel.r2),
+          c1: Math.min(cache.sel.c1, cache.sel.c2),
+          c2: Math.max(cache.sel.c1, cache.sel.c2),
+        }
+      : null;
+  }
+
+  function cellPosOf(node) {
+    const hit = node && node.closest ? node.closest("[data-xl-cell]") : null;
+    if (!hit) return null;
+    const parts = String(hit.getAttribute("data-xl-cell") || "").split(":");
+    const row = Number(parts[0]);
+    const col = Number(parts[1]);
+    return row && col ? { row, col } : null;
+  }
+
+  function selectGridCell(cache, pos, extend) {
+    if (!pos) return;
+    if (extend && cache.active) {
+      cache.sel = {
+        r1: Math.min(cache.active.row, pos.row),
+        r2: Math.max(cache.active.row, pos.row),
+        c1: Math.min(cache.active.col, pos.col),
+        c2: Math.max(cache.active.col, pos.col),
+      };
+    } else {
+      cache.active = { row: pos.row, col: pos.col };
+      cache.sel = { r1: pos.row, r2: pos.row, c1: pos.col, c2: pos.col };
+    }
+  }
+
+  function gridSelLabel(cache) {
+    const range = gridRange(cache);
+    if (!range) return "Chọn ô để xem vùng";
+    const cells = (range.r2 - range.r1 + 1) * (range.c2 - range.c1 + 1);
+    return cells > 1
+      ? `${cellAddressLabel(range.r1, range.c1)}:${cellAddressLabel(range.r2, range.c2)} · ${cells} ô`
+      : cellAddressLabel(range.r1, range.c1);
+  }
+
+  function paintGridSel(cache) {
+    const range = gridRange(cache);
+    document.querySelectorAll(".xl-grid-wrap td[data-xl-cell]").forEach((td) => {
+      const pos = cellPosOf(td);
+      if (!pos) return;
+      td.classList.toggle(
+        "is-sel",
+        !!range && pos.row >= range.r1 && pos.row <= range.r2 && pos.col >= range.c1 && pos.col <= range.c2
+      );
+      td.classList.toggle("is-active", !!cache.active && cache.active.row === pos.row && cache.active.col === pos.col);
+    });
+    const info = document.querySelector("[data-xl-sel-info]");
+    if (info) info.textContent = gridSelLabel(cache);
+  }
+
+  function gridCellText(cache, row, col) {
+    const td = document.querySelector(`.xl-grid-wrap td[data-xl-cell="${row}:${col}"]`);
+    if (td) {
+      const input = td.querySelector(".xl-grid-input");
+      return input ? input.value : td.textContent || "";
+    }
+    return readCellRawText(cache.sheetRef.getCell(row, col).value);
+  }
+
+  function selectionTsv(cache) {
+    const range = gridRange(cache);
+    if (!range) return "";
+    const lines = [];
+    for (let row = range.r1; row <= range.r2; row += 1) {
+      const line = [];
+      for (let col = range.c1; col <= range.c2; col += 1) line.push(gridCellText(cache, row, col));
+      lines.push(line.join("\t"));
+    }
+    return lines.join("\n");
+  }
+
+  function flattenFormulaValues(value, out) {
+    if (value && value.__range) {
+      value.__range.forEach((line) => line.forEach((item) => flattenFormulaValues(item, out)));
+      return out;
+    }
+    out.push(value);
+    return out;
+  }
+
+  function formulaNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "boolean") return value ? 1 : 0;
+    if (typeof value === "string") return parseNum(value);
+    return null;
+  }
+
+  function formulaTruthy(value) {
+    if (value && value.__range) return false;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") {
+      const text = value.trim().toUpperCase();
+      if (text === "TRUE") return true;
+      if (text === "FALSE" || text === "") return false;
+      const num = parseNum(text);
+      return num === null ? true : num !== 0;
+    }
+    return false;
+  }
+
+  function formulaCompare(op, left, right) {
+    if (op === "&") return readCellRawText(left) + readCellRawText(right);
+    const a = formulaNumber(left);
+    const b = formulaNumber(right);
+    const x = a === null ? String(left == null ? "" : left) : a;
+    const y = b === null ? String(right == null ? "" : right) : b;
+    switch (op) {
+      case "=":
+        return x === y;
+      case "<>":
+        return x !== y;
+      case "<":
+        return x < y;
+      case ">":
+        return x > y;
+      case "<=":
+        return x <= y;
+      case ">=":
+        return x >= y;
+      default:
+        throw new Error("formula compare");
+    }
+  }
+
+  function formulaFunction(name, args) {
+    if (name === "IF") {
+      if (args.length < 2) throw new Error("formula IF");
+      return formulaTruthy(args[0]) ? args[1] : args.length > 2 ? args[2] : false;
+    }
+    if (name === "ROUND") {
+      const num = formulaNumber(args[0]);
+      const digits = Math.trunc(formulaNumber(args[1]) || 0);
+      if (num === null) return 0;
+      const factor = 10 ** digits;
+      return Math.round(num * factor) / factor;
+    }
+    if (name === "ABS") {
+      const num = formulaNumber(args[0]);
+      return num === null ? 0 : Math.abs(num);
+    }
+    if (name === "NOT") return !formulaTruthy(args[0]);
+    const flat = [];
+    args.forEach((arg) => flattenFormulaValues(arg, flat));
+    const nums = [];
+    flat.forEach((item) => {
+      const num = formulaNumber(item);
+      if (num !== null) nums.push(num);
+    });
+    switch (name) {
+      case "SUM":
+        return nums.reduce((sum, num) => sum + num, 0);
+      case "AVERAGE":
+        return nums.length ? nums.reduce((sum, num) => sum + num, 0) / nums.length : 0;
+      case "MIN":
+        return nums.length ? nums.reduce((min, num) => Math.min(min, num), Infinity) : 0;
+      case "MAX":
+        return nums.length ? nums.reduce((max, num) => Math.max(max, num), -Infinity) : 0;
+      case "COUNT":
+        return nums.length;
+      case "COUNTA":
+        return flat.filter((item) => readCellRawText(item) !== "").length;
+      case "AND":
+        return flat.every((item) => formulaTruthy(item));
+      case "OR":
+        return flat.some((item) => formulaTruthy(item));
+      default:
+        throw new Error(`formula function ${name}`);
+    }
+  }
+
+  function formulaCellValue(cache, row, col, depth) {
+    const key = `${row}:${col}`;
+    if (cache.calc.has(key)) return cache.calc.get(key);
+    if (depth > 24) throw new Error("formula cycle");
+    const value = cache.sheetRef.getCell(row, col).value;
+    let out = null;
+    if (value instanceof Date) out = (value.getTime() - Date.UTC(1899, 11, 30)) / 86400000;
+    else if (value && typeof value === "object" && value.formula) out = evalFormulaText(value.formula, cache, depth + 1);
+    else if (value && typeof value === "object" && value.sharedFormula) {
+      out = value.result === undefined ? null : value.result;
+    } else if (typeof value === "number" || typeof value === "boolean") out = value;
+    else out = readCellRawText(value);
+    cache.calc.set(key, out);
+    return out;
+  }
+
+  function evalFormulaText(text, cache, depth) {
+    const tokens = [];
+    const src = String(text || "");
+    let index = 0;
+    while (index < src.length) {
+      const ch = src[index];
+      if (/\s/.test(ch)) {
+        index += 1;
+        continue;
+      }
+      if (ch === '"') {
+        let out = "";
+        let cursor = index + 1;
+        while (cursor < src.length) {
+          if (src[cursor] === '"') {
+            if (src[cursor + 1] === '"') {
+              out += '"';
+              cursor += 2;
+              continue;
+            }
+            break;
+          }
+          out += src[cursor];
+          cursor += 1;
+        }
+        if (cursor >= src.length) throw new Error("formula string");
+        tokens.push({ t: "str", v: out });
+        index = cursor + 1;
+        continue;
+      }
+      const num = /^(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/.exec(src.slice(index));
+      if (num) {
+        tokens.push({ t: "num", v: Number(num[0]) });
+        index += num[0].length;
+        continue;
+      }
+      const ref = /^\$?[A-Za-z]{1,3}\$?\d+/.exec(src.slice(index));
+      if (ref) {
+        tokens.push({ t: "ref", v: ref[0].replace(/\$/g, "").toUpperCase() });
+        index += ref[0].length;
+        continue;
+      }
+      const name = /^[A-Za-z_][A-Za-z0-9._]*/.exec(src.slice(index));
+      if (name) {
+        tokens.push({ t: "name", v: name[0].toUpperCase() });
+        index += name[0].length;
+        continue;
+      }
+      if ("+-*/^%(),;:&<>=".includes(ch)) {
+        tokens.push({ t: "op", v: ch });
+        index += 1;
+        continue;
+      }
+      throw new Error("formula token");
+    }
+
+    let pos = 0;
+    const peek = () => tokens[pos];
+    const isOp = (token, values) => !!token && token.t === "op" && values.includes(token.v);
+    function eat(value) {
+      const token = tokens[pos];
+      if (!token || !(token.t === "op" && token.v === value)) throw new Error(`formula expect ${value}`);
+      pos += 1;
+      return token;
+    }
+    function eatOp(values) {
+      const token = peek();
+      if (!isOp(token, values)) return null;
+      pos += 1;
+      return token.v;
+    }
+    function numeric(value) {
+      if (value && value.__range) throw new Error("formula range math");
+      const num = formulaNumber(value);
+      return num === null ? 0 : num;
+    }
+    function rangeValue(from, to) {
+      const a = parseAddress(from);
+      const b = parseAddress(to);
+      if (!a || !b) throw new Error("formula range");
+      const rows = Math.min(a.row, b.row);
+      const rowsEnd = Math.max(a.row, b.row);
+      const cols = Math.min(a.col, b.col);
+      const colsEnd = Math.max(a.col, b.col);
+      if ((rowsEnd - rows + 1) * (colsEnd - cols + 1) > 20000) throw new Error("formula range big");
+      const out = [];
+      for (let row = rows; row <= rowsEnd; row += 1) {
+        const line = [];
+        for (let col = cols; col <= colsEnd; col += 1) line.push(formulaCellValue(cache, row, col, depth));
+        out.push(line);
+      }
+      return { __range: out };
+    }
+    function primary() {
+      const token = peek();
+      if (!token) throw new Error("formula primary");
+      if (token.t === "num" || token.t === "str") {
+        pos += 1;
+        return token.v;
+      }
+      if (token.t === "ref") {
+        pos += 1;
+        if (isOp(peek(), [":"])) {
+          pos += 1;
+          const end = peek();
+          if (!end || end.t !== "ref") throw new Error("formula range end");
+          pos += 1;
+          return rangeValue(token.v, end.v);
+        }
+        const addr = parseAddress(token.v);
+        if (!addr) throw new Error("formula ref");
+        return formulaCellValue(cache, addr.row, addr.col, depth);
+      }
+      if (isOp(token, ["("])) {
+        pos += 1;
+        const out = compare();
+        eat(")");
+        return out;
+      }
+      if (token.t === "name") {
+        pos += 1;
+        if (!isOp(peek(), ["("])) {
+          if (token.v === "TRUE") return true;
+          if (token.v === "FALSE") return false;
+          throw new Error("formula name");
+        }
+        pos += 1;
+        const args = [];
+        if (!isOp(peek(), [")"])) {
+          for (;;) {
+            args.push(compare());
+            if (!eatOp([",", ";"])) break;
+          }
+        }
+        eat(")");
+        return formulaFunction(token.v, args);
+      }
+      throw new Error("formula primary");
+    }
+    function unary() {
+      const op = eatOp(["+", "-"]);
+      if (op) {
+        const value = numeric(unary());
+        return op === "-" ? -value : value;
+      }
+      let out = primary();
+      if (eatOp(["%"])) out = numeric(out) / 100;
+      return out;
+    }
+    function power() {
+      const base = unary();
+      if (eatOp(["^"])) return numeric(base) ** numeric(unary());
+      return base;
+    }
+    function term() {
+      let left = power();
+      for (;;) {
+        const op = eatOp(["*", "/"]);
+        if (!op) return left;
+        const right = numeric(power());
+        if (op === "*") left = numeric(left) * right;
+        else left = right === 0 ? NaN : numeric(left) / right;
+      }
+    }
+    function additive() {
+      let left = term();
+      for (;;) {
+        const op = eatOp(["+", "-"]);
+        if (!op) return left;
+        const right = numeric(term());
+        left = op === "+" ? numeric(left) + right : numeric(left) - right;
+      }
+    }
+    function compare() {
+      let left = additive();
+      for (;;) {
+        const op = eatOp(["=", "<>", "<=", ">=", "<", ">", "&"]);
+        if (!op) return left;
+        left = formulaCompare(op, left, additive());
+      }
+    }
+    if (!tokens.length) throw new Error("formula empty");
+    const result = compare();
+    if (pos < tokens.length) throw new Error("formula trailing");
+    return result;
+  }
+
+  function formatCalcValue(value) {
+    if (typeof value === "number") return Number.isInteger(value) ? String(value) : String(Math.round(value * 1e6) / 1e6);
+    if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+    return value === null || value === undefined ? "" : String(value);
+  }
+
+  function recalcGrid(cache) {
+    if (!cache || !cache.sheetRef) return;
+    cache.calc = new Map();
+    document.querySelectorAll(".xl-grid-wrap td[data-xl-fcell]").forEach((td) => {
+      const parts = String(td.getAttribute("data-xl-fcell") || "").split(":");
+      const row = Number(parts[0]);
+      const col = Number(parts[1]);
+      if (!row || !col) return;
+      const cell = cache.sheetRef.getCell(row, col);
+      const value = cell.value;
+      if (!value || typeof value !== "object" || !value.formula) return;
+      let result;
+      try {
+        result = evalFormulaText(value.formula, cache, 0);
+      } catch (err) {
+        return;
+      }
+      if (result && typeof result === "object") return;
+      if (typeof result === "number" && !Number.isFinite(result)) return;
+      cell.value = Object.assign({}, value, { result });
+      td.textContent = formatCalcValue(result);
+      td.classList.add("is-calc");
+    });
+  }
+
+  function markGridDirty(cache) {
+    cache.dirty = true;
+    document.querySelectorAll(".xl-grid-wrap").forEach((el) => el.classList.add("is-dirty"));
+    const save = document.querySelector(`[data-xl-save][data-id="${cache.reportId}"]`);
+    if (save && !save.classList.contains("is-dirty")) {
+      save.classList.add("is-dirty");
+      save.innerHTML = `${A.icon("pencil")} Lưu thay đổi`;
+    }
+  }
+
+  function syncInputValue(input, value) {
+    if (!input) return;
+    let text = "";
+    let kind = "s";
+    if (typeof value === "number") {
+      text = String(value);
+      kind = "n";
+    } else if (typeof value === "boolean") {
+      text = value ? "TRUE" : "FALSE";
+    } else if (value && typeof value === "object" && Array.isArray(value.richText)) {
+      text = readCellText(value);
+      kind = "r";
+    } else if (typeof value === "string") {
+      text = value;
+    } else if (value && typeof value === "object" && typeof value.text === "string") {
+      text = value.text;
+    }
+    input.value = text;
+    input.setAttribute("data-xl-kind", kind);
+    input.classList.toggle("is-num", kind === "n");
+  }
+
+  function pasteGridText(cache, text) {
+    const matrix = String(text)
+      .replace(/\r\n?/g, "\n")
+      .replace(/\n+$/, "")
+      .split("\n")
+      .map((line) => line.split("\t"));
+    const range = gridRange(cache);
+    const anchor = cache.active || (range ? { row: range.r1, col: range.c1 } : null);
+    if (!anchor || !matrix.length) return 0;
+    const single = matrix.length === 1 && matrix[0].length === 1;
+    const targets = [];
+    if (single && range && (range.r2 > range.r1 || range.c2 > range.c1)) {
+      for (let row = range.r1; row <= range.r2; row += 1) {
+        for (let col = range.c1; col <= range.c2; col += 1) targets.push({ row, col, text: matrix[0][0] });
+      }
+    } else {
+      matrix.forEach((line, r) => {
+        line.forEach((value, c) => targets.push({ row: anchor.row + r, col: anchor.col + c, text: value }));
+      });
+    }
+    let count = 0;
+    targets.forEach((item) => {
+      if (item.row < 1 || item.col < 1 || item.row > 500 || item.col > 5000) return;
+      const cell = cache.sheetRef.getCell(item.row, item.col);
+      const master = cell.master || cell;
+      if (master.address !== cell.address) return;
+      const current = cell.value;
+      if (current instanceof Date) return;
+      if (current && typeof current === "object" && (current.formula || current.sharedFormula)) return;
+      cell.value = coerceCellText(item.text, cell);
+      if (item.row > cache.maxRow) cache.maxRow = item.row;
+      if (item.col > cache.maxCol) cache.maxCol = item.col;
+      count += 1;
+    });
+    if (!count) return 0;
+    markGridDirty(cache);
+    document.querySelectorAll(".xl-grid-wrap td[data-xl-cell]").forEach((td) => {
+      const parts = String(td.getAttribute("data-xl-cell") || "").split(":");
+      const row = Number(parts[0]);
+      const col = Number(parts[1]);
+      if (!row || !col) return;
+      syncInputValue(td.querySelector(".xl-grid-input"), cache.sheetRef.getCell(row, col).value);
+    });
+    recalcGrid(cache);
+    return count;
+  }
+
+  function ensureCellVisible(cache, row, col) {
+    let changed = false;
+    if (col > cache.fixedCols) {
+      if (cache.dayGroups.length) {
+        let index = cache.dayGroups.findIndex((group) => col >= group.col && col <= group.end);
+        if (index < 0) index = col < cache.dayGroups[0].col ? 0 : cache.dayGroups.length - 1;
+        const page = Math.floor(index / 5);
+        if (page !== cache.page) {
+          cache.page = page;
+          changed = true;
+        }
+        cache.dayFocus = index;
+      } else {
+        const page = Math.floor((col - cache.fixedCols - 1) / COLS_PER_PAGE);
+        if (page !== cache.page) {
+          cache.page = Math.max(page, 0);
+          changed = true;
+        }
+      }
+    }
+    const rowPage = Math.floor((row - 1) / ROWS_PER_PAGE);
+    if (rowPage !== cache.rowPage) {
+      cache.rowPage = rowPage;
+      changed = true;
+    }
+    return changed;
+  }
+
+  function focusGridCell(cache, row, col) {
+    if (ensureCellVisible(cache, row, col) && bridge()) bridge().refreshDetail();
+    paintGridSel(cache);
+    const input = document.querySelector(`.xl-grid-wrap .xl-grid-input[data-xl-grid-cell="${row}:${col}"]`);
+    if (input) {
+      input.focus();
+      input.select();
+      return true;
+    }
+    const td = document.querySelector(`.xl-grid-wrap td[data-xl-cell="${row}:${col}"]`);
+    if (td) td.scrollIntoView({ block: "nearest", inline: "nearest" });
+    return false;
   }
 
   /* ---------- AI phối hợp nhận diện cấu trúc tệp ---------- */
@@ -1190,6 +1805,10 @@
     }
     const colWin = gridColumnWindow(cache);
     const rowWin = gridRowWindow(cache);
+    setTimeout(() => {
+      const current = state.grid;
+      if (current && current.reportId === report.id) recalcGrid(current);
+    }, 0);
     const stats = excel.gridStats || {};
     const sheetNames = Array.isArray(excel.templateSheets) && excel.templateSheets.length
       ? excel.templateSheets
@@ -1233,12 +1852,14 @@
           <a class="btn btn-ghost btn-sm" href="${fileUrl(excel.templateId, true)}" title="Tải tệp gốc">${A.icon("download")} Gốc</a>
           <button class="btn btn-ghost btn-sm" type="button" data-xl-pick-template data-id="${esc(report.id)}">${A.icon("refresh")} Đổi mẫu</button>
           <button class="btn btn-ghost btn-sm" type="button" data-xl-ai-scan data-id="${esc(report.id)}">${A.icon("spark")} AI nhận diện</button>
+          <button class="btn ${cache.maxed ? "btn-accent" : "btn-ghost"} btn-sm" type="button" data-xl-grid-max data-id="${esc(report.id)}" title="${cache.maxed ? "Thu nhỏ bảng" : "Mở rộng bảng toàn màn hình"}">${A.icon(cache.maxed ? "collapse" : "expand")} ${cache.maxed ? "Thu nhỏ" : "Toàn màn hình"}</button>
         </div>
         <input type="file" data-xl-template-input data-id="${esc(report.id)}" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
       </div>
       <div class="xl-grid-note">${A.icon("calendar")} Ngày báo cáo <b>${esc(fmtDate(report.date, "/") || "—")}</b>. GUỒNG tự thay ngày, tháng trong tệp khi lưu bản mới.</div>
       <div class="xl-grid-bar">
         ${sheetPicker}
+        <span class="xl-grid-sel" data-xl-sel-info>${esc(gridSelLabel(cache))}</span>
         ${dayPicker}
         <div class="xl-grid-page">
           <button type="button" class="icon-btn bare" data-xl-grid-colpage="-1" data-id="${esc(report.id)}" title="Lùi"${colWin.page === 0 ? " disabled" : ""}>${A.icon("chevron-left")}</button>
@@ -1248,7 +1869,7 @@
         ${rowBar}
       </div>
       ${gridTableHtml(cache)}
-      <div class="xl-grid-hint">${A.icon("alert")} Ô trắng là nhập được. Ô xám là công thức hoặc ngày tự động. Định dạng, gộp ô và công thức giữ nguyên như tệp gốc.</div>
+      <div class="xl-grid-hint">${A.icon("alert")} Ô trắng là nhập được, ô xám là công thức hoặc ngày tự động. Kéo chuột hoặc Shift+bấm để chọn nhiều ô, Cmd/Ctrl+C và Cmd/Ctrl+V dán thẳng từ Excel. Cột tổng tự tính lại khi sửa số. Định dạng, gộp ô và công thức giữ nguyên như tệp gốc.</div>
       ${filenameHtml(report, draftOf(report))}
       <div class="xl-save">
         <p>${A.icon("alert")} Mỗi lần lưu tạo một bản mới trong kho. Bản sau mở lại từ bản mới nhất để giữ số liệu vừa nhập.</p>
@@ -1266,27 +1887,13 @@
     const col = Number(parts[1]);
     if (!row || !col) return;
     const cell = cache.sheetRef.getCell(row, col);
-    const kind = target.getAttribute("data-xl-kind") || "s";
-    const text = target.value;
-    if (text === "") {
-      cell.value = null;
-    } else if (kind === "n") {
-      const num = Number(text.replace(",", "."));
-      cell.value = Number.isFinite(num) ? num : text;
-    } else if (kind === "r" && cell.value && Array.isArray(cell.value.richText)) {
-      const font = (cell.value.richText[0] || {}).font;
-      cell.value = { richText: [{ font: font ? Object.assign({}, font) : undefined, text }] };
-    } else {
-      cell.value = text;
-    }
-    cache.dirty = true;
-    const editor = target.closest(".xl-grid-wrap");
-    if (editor) editor.classList.add("is-dirty");
-    const save = document.querySelector(`[data-xl-save][data-id="${cache.reportId}"]`);
-    if (save && !save.classList.contains("is-dirty")) {
-      save.classList.add("is-dirty");
-      save.innerHTML = `${A.icon("pencil")} Lưu thay đổi`;
-    }
+    cell.value = coerceCellText(target.value, cell);
+    const numeric = typeof cell.value === "number";
+    target.classList.toggle("is-num", numeric);
+    if (numeric) target.setAttribute("data-xl-kind", "n");
+    else if (target.getAttribute("data-xl-kind") === "n") target.setAttribute("data-xl-kind", "s");
+    markGridDirty(cache);
+    recalcGrid(cache);
   }
 
   function dateParts(iso) {
@@ -1770,6 +2377,14 @@
       if (bridge()) bridge().refreshDetail();
       return;
     }
+    const maxGrid = event.target.closest("[data-xl-grid-max]");
+    if (maxGrid) {
+      const cache = state.grid;
+      if (!cache) return;
+      cache.maxed = !cache.maxed;
+      if (bridge()) bridge().refreshDetail();
+      return;
+    }
     const dismissSuggest = event.target.closest("[data-xl-dismiss-suggest]");
     if (dismissSuggest) {
       state.suggestion = null;
@@ -1787,6 +2402,119 @@
       state.error = "";
       if (bridge()) bridge().refreshDetail();
       A.toast("Đã xoá số liệu đang nhập. Bấm Lưu để áp dụng.", "info");
+    }
+  });
+
+  document.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return;
+    const cache = state.grid;
+    if (!cache) return;
+    const td = event.target.closest ? event.target.closest(".xl-grid-wrap td[data-xl-cell]") : null;
+    if (!td) return;
+    const pos = cellPosOf(td);
+    if (!pos) return;
+    const input = event.target.closest(".xl-grid-input");
+    event.preventDefault();
+    selectGridCell(cache, pos, event.shiftKey);
+    cache.dragging = true;
+    if (input) {
+      input.focus();
+      if (!event.shiftKey) input.select();
+    }
+    paintGridSel(cache);
+  });
+
+  document.addEventListener("mouseover", (event) => {
+    const cache = state.grid;
+    if (!cache || !cache.dragging) return;
+    const td = event.target.closest ? event.target.closest(".xl-grid-wrap td[data-xl-cell]") : null;
+    if (!td) return;
+    selectGridCell(cache, cellPosOf(td), true);
+    paintGridSel(cache);
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (state.grid) state.grid.dragging = false;
+  });
+
+  document.addEventListener("copy", (event) => {
+    const cache = state.grid;
+    if (!cache || !cache.sel) return;
+    const grid = document.querySelector(".xl-grid-wrap");
+    if (!grid) return;
+    const active = document.activeElement;
+    const tag = active ? active.tagName : "";
+    const editable = tag === "INPUT" || tag === "TEXTAREA" || (active && active.isContentEditable);
+    if (editable && !grid.contains(active)) return;
+    const range = gridRange(cache);
+    const multi = !!(range && (range.r2 > range.r1 || range.c2 > range.c1));
+    if (!multi && editable && active.selectionStart !== active.selectionEnd) return;
+    const text = selectionTsv(cache);
+    if (!text) return;
+    if (event.clipboardData) {
+      event.clipboardData.setData("text/plain", text);
+      event.preventDefault();
+    }
+  });
+
+  document.addEventListener("paste", (event) => {
+    const cache = state.grid;
+    if (!cache) return;
+    const grid = document.querySelector(".xl-grid-wrap");
+    const target = event.target;
+    if (!grid || !target || !grid.contains(target)) return;
+    const text = event.clipboardData ? event.clipboardData.getData("text/plain") : "";
+    if (!text) return;
+    const range = gridRange(cache);
+    const multi = !!(range && (range.r2 > range.r1 || range.c2 > range.c1));
+    const input = target.closest ? target.closest(".xl-grid-input") : null;
+    if (!/[\t\r\n]/.test(text) && !multi && input) return;
+    event.preventDefault();
+    const count = pasteGridText(cache, text);
+    if (count) A.toast(`Đã dán ${count} ô từ bộ nhớ tạm.`, "success");
+  });
+
+  document.addEventListener("keydown", (event) => {
+    const cache = state.grid;
+    if (!cache) return;
+    const target = event.target;
+    const grid = document.querySelector(".xl-grid-wrap");
+    if (!grid || !target || !grid.contains(target)) return;
+    if (event.isComposing || event.metaKey || event.ctrlKey || event.altKey) return;
+    const input = target.classList && target.classList.contains("xl-grid-input") ? target : null;
+    const base = cache.active || cellPosOf(target);
+    if (!base) return;
+    const moveTo = (row, col) => {
+      const targetRow = Math.min(Math.max(row, 1), cache.maxRow);
+      const targetCol = Math.min(Math.max(col, 1), cache.maxCol);
+      cache.active = { row: targetRow, col: targetCol };
+      cache.sel = { r1: targetRow, r2: targetRow, c1: targetCol, c2: targetCol };
+      event.preventDefault();
+      focusGridCell(cache, targetRow, targetCol);
+    };
+    if (event.key === "Enter") {
+      moveTo(base.row + (event.shiftKey ? -1 : 1), base.col);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      moveTo(base.row + 1, base.col);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      moveTo(base.row - 1, base.col);
+      return;
+    }
+    if (!input && event.key === "ArrowLeft") {
+      moveTo(base.row, base.col - 1);
+      return;
+    }
+    if (!input && event.key === "ArrowRight") {
+      moveTo(base.row, base.col + 1);
+      return;
+    }
+    if (event.key === "Escape" && cache.active) {
+      cache.sel = { r1: cache.active.row, r2: cache.active.row, c1: cache.active.col, c2: cache.active.col };
+      paintGridSel(cache);
     }
   });
 

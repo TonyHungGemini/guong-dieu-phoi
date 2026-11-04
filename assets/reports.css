@@ -1353,6 +1353,10 @@ body.sidebar-open .rp-bee { opacity: 0; pointer-events: none; transform: transla
 }
 .xl-grid-pick input[type="number"] { width: 64px; }
 .xl-grid-page { display: flex; align-items: center; gap: 4px; margin-left: auto; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.xl-grid-sel {
+  padding: 3px 8px; border-radius: 99px; background: var(--card-2);
+  font-size: 9.5px; font-weight: 650; color: var(--muted); white-space: nowrap;
+}
 .xl-grid-page .icon-btn[disabled] { opacity: 0.35; pointer-events: none; }
 .xl-grid-wrap {
   max-height: 58vh; overflow: auto; overscroll-behavior: contain;
@@ -1369,6 +1373,10 @@ body.sidebar-open .rp-bee { opacity: 0; pointer-events: none; transform: transla
   border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
 }
 .xl-grid-table tr:last-child td { border-bottom: 0; }
+.xl-grid-table td { position: relative; }
+.xl-grid-table td.is-sel { background: var(--accent-soft); }
+.xl-grid-table td.is-active { outline: 2px solid var(--accent); outline-offset: -2px; z-index: 1; }
+.xl-grid-table td.is-calc { color: var(--text); }
 .xl-grid-numcol { width: 34px; }
 .xl-grid-rowno {
   position: sticky; left: 0; z-index: 2;
@@ -1392,6 +1400,24 @@ body.sidebar-open .rp-bee { opacity: 0; pointer-events: none; transform: transla
   font-size: 9.5px; line-height: 1.5; color: var(--muted);
 }
 .xl-grid-hint .ico { width: 12px; height: 12px; flex: none; margin-top: 1px; color: var(--accent); }
+
+/* Bảng Excel mở rộng toàn màn hình */
+.xl-grid-wrap.is-max { flex: 1 1 auto; min-width: 0; min-height: 240px; max-height: none; }
+.rp-drawer-wrap:has(.xl-grid-wrap.is-max) { padding: 10px; }
+.rp-drawer:has(.xl-grid-wrap.is-max) {
+  width: min(1500px, calc(100vw - 20px));
+  border: 1px solid var(--line); border-radius: var(--r-md);
+}
+.rp-drawer:has(.xl-grid-wrap.is-max) .rp-dr-actions,
+.rp-drawer:has(.xl-grid-wrap.is-max) .rp-ready { display: none; }
+.rp-drawer:has(.xl-grid-wrap.is-max) .rp-dr-head { padding-bottom: 12px; }
+.rp-drawer:has(.xl-grid-wrap.is-max) .rp-dr-body { display: flex; overflow: hidden; padding-bottom: 16px; }
+.rp-drawer:has(.xl-grid-wrap.is-max) .rp-dr-body > .rp-dr-section { flex: 1; min-width: 0; min-height: 0; }
+.rp-drawer:has(.xl-grid-wrap.is-max) .xl-grid-hint,
+.rp-drawer:has(.xl-grid-wrap.is-max) .xl-grid-note,
+.rp-drawer:has(.xl-grid-wrap.is-max) .xl-name { display: none; }
+.rp-drawer:has(.xl-grid-wrap.is-max) .xl-grid-table th,
+.rp-drawer:has(.xl-grid-wrap.is-max) .xl-grid-table td { height: 32px; }
 .xl-save .btn.is-dirty { box-shadow: 0 0 0 3px var(--accent-soft); }
 
 .xl-ai {
@@ -1428,6 +1454,8 @@ body.sidebar-open .rp-bee { opacity: 0; pointer-events: none; transform: transla
 
 @media (max-width: 620px) {
   .xl-grid-wrap { max-height: 50vh; }
+  .rp-drawer-wrap:has(.xl-grid-wrap.is-max) { padding: 0; }
+  .rp-drawer:has(.xl-grid-wrap.is-max) { width: 100%; border: 0; border-radius: 0; }
   .xl-grid-bar { gap: 6px; }
   .xl-grid-pick { flex: 1 1 45%; }
   .xl-grid-pick select { flex: 1; max-width: none; }
