@@ -722,6 +722,7 @@
       zaloPhone: report.zaloPhone || "",
       agentEnabled: Boolean(report.agentEnabled),
       notes: "",
+      excel: report.excel ? JSON.parse(JSON.stringify(report.excel)) : null,
       createdAt: now,
       updatedAt: now,
       previousId: report.id,
@@ -729,6 +730,41 @@
     R.reports.push(reminder);
     logAction(reminder, "create", `Nhắc kỳ tới ${shortDate(next)} · từ «${report.title || "Báo cáo"}»`);
     return reminder;
+  }
+
+  /* Kỳ mới nhận bản sao mẫu Excel, bản đã lưu và đính kèm của kỳ trước. */
+  async function inheritFiles(source, target) {
+    const files = (R.fileBlobs || []).filter((file) => file && file.reportId === source.id);
+    if (!files.length) return;
+    /* Tuần tự để máy chủ không ghi đè kho tệp khi nhiều bản sao cùng lúc. */
+    for (const file of files) {
+      try {
+        const res = await fetch(`/api/files/${encodeURIComponent(file.id)}/copy`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "x-report-id": target.id },
+        });
+        if (!res.ok) continue;
+        const data = await res.json().catch(() => null);
+        const copy = data && data.file;
+        if (!copy || !copy.id) continue;
+        R.fileBlobs = R.fileBlobs.filter((item) => item.id !== copy.id).concat(copy);
+        if (!target.excel) continue;
+        if (copy.role === "excel-template" && file.id === target.excel.templateId) {
+          target.excel.templateId = copy.id;
+          target.excel.templateName = copy.name;
+          target.excel.templateSize = copy.size;
+        } else if (copy.role === "excel-latest" && file.id === target.excel.latestId) {
+          target.excel.latestId = copy.id;
+          target.excel.latestName = copy.name;
+          target.excel.latestSize = copy.size;
+          target.excel.latestAt = copy.uploadedAt;
+          target.excel.latestVersion = copy.version;
+        }
+      } catch (err) {
+        /* Giữ tham chiếu kỳ trước nếu chưa sao chép được. */
+      }
+    }
   }
 
   async function completeReport(report) {
@@ -755,6 +791,7 @@
     );
     refresh();
     try {
+      if (reminder) await inheritFiles(report, reminder);
       await push();
     } catch (err) {
       A.toast(err.message || "Chưa đồng bộ được — thay đổi vẫn lưu trên máy này.", "error");

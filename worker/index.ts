@@ -833,6 +833,41 @@ async function handleApi(request: Request, env: Env, url: URL): Promise<Response
     return json({ ok: true, file: meta });
   }
 
+  /* Kỳ báo cáo mới nhận bản sao tệp của kỳ trước (mẫu Excel, bản đã lưu, đính kèm)
+     để không phải tải lại từ máy người dùng. */
+  const copyMatch = path.match(/^\/api\/files\/([A-Za-z0-9_-]{1,64})\/copy$/);
+  if (copyMatch && request.method === "POST") {
+    const key = await resolveStoreKey(request, env);
+    if (!key) return json({ ok: false, error: "Cần đăng nhập Google" }, 401);
+    const reportId = String(request.headers.get("x-report-id") || "").slice(0, 64);
+    if (!reportId) return json({ ok: false, error: "Thiếu báo cáo đích" }, 400);
+    const store = await readStore(env, key);
+    const source: any = store.fileBlobs.find((b: any) => b?.id === copyMatch[1]);
+    if (!source) return json({ ok: false, error: "Không tìm thấy tệp trong kho" }, 404);
+    const bytes = await env.SYNC_KV.get(blobKey(key, source.id), "arrayBuffer");
+    if (!bytes) return json({ ok: false, error: "Tệp không còn trên máy chủ" }, 404);
+    const id = `f${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const version = store.fileBlobs.filter((b: any) => b?.reportId === reportId).length + 1;
+    const meta: Record<string, unknown> = {
+      id,
+      reportId,
+      name: source.name || "tep-dinh-kem",
+      size: bytes.byteLength,
+      type: source.type || "application/octet-stream",
+      version,
+      uploadedAt: source.uploadedAt || new Date().toISOString(),
+      copiedAt: new Date().toISOString(),
+    };
+    if (source.role) meta.role = source.role;
+    await env.SYNC_KV.put(blobKey(key, id), bytes, {
+      metadata: { reportId, name: meta.name, type: meta.type, size: bytes.byteLength },
+    });
+    store.fileBlobs = store.fileBlobs.concat(meta);
+    store.lastUpdated = String(meta.copiedAt);
+    await writeStore(env, key, store);
+    return json({ ok: true, file: meta });
+  }
+
   const fileMatch = path.match(/^\/api\/files\/([A-Za-z0-9_-]{1,64})$/);
   if (fileMatch && (request.method === "GET" || request.method === "HEAD")) {
     const key = await resolveStoreKey(request, env);
