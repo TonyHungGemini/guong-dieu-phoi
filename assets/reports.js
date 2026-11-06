@@ -79,6 +79,7 @@
     aiBusy: null,
     aiError: "",
     dayStamp: "",
+    rolling: false,
   };
 
   /* ---------- tiện ích ---------- */
@@ -193,26 +194,69 @@
     report.updatedAt = new Date().toISOString();
     logAction(report, "done", keeper ? `Gộp kỳ trùng vào «${keeper.title || "báo cáo"}» (${shortDate(reportDue(report))})` : "Đóng kỳ trùng");
   }
-  /* Bản cũ (không có seriesId) và nhắc kỳ mới có thể cùng mở một kỳ — đóng bớt bản trùng. */
-  function dedupeSeries() {
+  /* Đóng các bản đang mở khác của cùng chuỗi khi một kỳ đã được chốt/gửi. */
+  function retireSeriesSiblings(report) {
+    if (!isRecurring(report)) return 0;
+    const key = seriesKey(report);
+    const due = reportDue(report);
+    let count = 0;
+    R.reports.forEach((item) => {
+      if (item === report || isDone(item) || !isRecurring(item) || seriesKey(item) !== key) return;
+      if (due && reportDue(item) && reportDue(item) < due) return;
+      retireDuplicate(item, report);
+      count += 1;
+    });
+    return count;
+  }
+  /* Mỗi chuỗi chỉ giữ một kỳ đang mở; chuỗi đã chốt hết thì hẹn kỳ kế tiếp. */
+  async function normalizeSeries() {
     if (!R.reports.length) return 0;
+    const today = A.todayISO();
     const groups = new Map();
     R.reports.forEach((report) => {
-      if (!isRecurring(report) || isDone(report)) return;
+      if (!isRecurring(report)) return;
       const key = seriesKey(report);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(report);
     });
     let count = 0;
-    groups.forEach((open) => {
-      if (open.length < 2) return;
-      const keeper = activeOpen(open);
-      open.forEach((report) => {
-        if (report === keeper) return;
-        retireDuplicate(report, keeper);
-        count += 1;
-      });
-    });
+    for (const members of groups.values()) {
+      let open = members.filter((report) => !isDone(report));
+      if (open.length) {
+        const keeper = activeOpen(open);
+        open.forEach((report) => {
+          if (report === keeper) return;
+          retireDuplicate(report, keeper);
+          count += 1;
+        });
+        const done = members.find((report) => isDone(report) && reportDue(report) === reportDue(keeper));
+        if (done) {
+          retireDuplicate(keeper, done);
+          open = [];
+          count += 1;
+        } else {
+          open = [keeper];
+        }
+      }
+      if (open.length) continue;
+      const handled = members.filter((report) => isDone(report) && reportDue(report) && !report.supersededBy);
+      const pool = handled.length ? handled : members.filter((report) => isDone(report) && reportDue(report));
+      const anchor = pool.sort((a, b) => {
+        const byDue = reportDue(b).localeCompare(reportDue(a));
+        if (byDue) return byDue;
+        const sent = String(b.lastSentAt || "").localeCompare(String(a.lastSentAt || ""));
+        if (sent) return sent;
+        return String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || ""));
+      })[0];
+      if (!anchor) continue;
+      const steps = Math.max(1, periodSteps(reportDue(anchor), anchor.frequency, today));
+      const target = shiftCycle(reportDue(anchor), anchor.frequency, steps);
+      if (!target) continue;
+      const reminder = cycleReminder(anchor, target);
+      if (!reminder) continue;
+      count += 1;
+      await inheritFiles(anchor, reminder).catch(() => {});
+    }
     return count;
   }
   function inferFrequency(category) {
@@ -279,42 +323,34 @@
     return next;
   }
 
-  /* Báo cáo định kỳ tự bắt kịp ngày/tuần/tháng/năm hiện tại; báo cáo đã chốt chỉ
-     quay lại kỳ mới khi chuỗi chưa có báo cáo đang mở kế tiếp. */
-  function rollRecurringReports(options) {
+  /* Chuỗi đã chốt thì hẹn kỳ kế tiếp; kỳ đang mở tụt lại thì bắt kịp hôm nay. */
+  async function rollRecurringReports(options) {
     const opts = options || {};
-    if (!R.loaded || !R.reports.length) return 0;
-    const today = A.todayISO();
-    R.dayStamp = today;
-    const merged = dedupeSeries();
-    const openSeries = new Set();
-    R.reports.forEach((report) => {
-      if (!isRecurring(report)) return;
-      if (!isDone(report)) openSeries.add(seriesKey(report));
-    });
-    let count = 0;
-    R.reports.forEach((report) => {
-      if (!isRecurring(report)) return;
-      const done = isDone(report);
-      if (done && openSeries.has(seriesKey(report))) return;
-      const next = rollReportToPeriod(report, today);
-      if (!next) return;
-      if (done) {
-        report.status = "To-do";
-        report.lastProcessedDate = today;
+    if (!R.loaded || !R.reports.length || R.rolling) return 0;
+    R.rolling = true;
+    try {
+      const today = A.todayISO();
+      R.dayStamp = today;
+      const normalized = await normalizeSeries();
+      let count = 0;
+      R.reports.forEach((report) => {
+        if (!isRecurring(report) || isDone(report)) return;
+        const next = rollReportToPeriod(report, today);
+        if (next) count += 1;
+      });
+      if (!count && !normalized) return 0;
+      R.reports = sortReports(R.reports);
+      broadcastReminders();
+      push().catch(() => {});
+      if (opts.silent) scheduleRefresh();
+      else refresh();
+      if (opts.notify && count) {
+        A.toast(`Đã tự chuyển ${count} báo cáo định kỳ sang kỳ mới.`, "success");
       }
-      count += 1;
-    });
-    if (!count && !merged) return 0;
-    R.reports = sortReports(R.reports);
-    broadcastReminders();
-    push().catch(() => {});
-    if (opts.silent) scheduleRefresh();
-    else refresh();
-    if (opts.notify && count) {
-      A.toast(`Đã tự chuyển ${count} báo cáo định kỳ sang kỳ mới.`, "success");
+      return count;
+    } finally {
+      R.rolling = false;
     }
-    return count;
   }
 
   function refresh() {
@@ -756,11 +792,11 @@
   }
 
   /* ---------- thao tác 1 chạm: hoàn thành / gia hạn ---------- */
-  function cycleReminder(report) {
+  function cycleReminder(report, target) {
     const freq = report.frequency;
     if (!freq || freq === "none") return null;
     const base = report.dueDate || report.date || A.todayISO();
-    const next = base > A.todayISO() ? shiftCycle(base, freq, 1) : nextDueDate(report);
+    const next = target || (base > A.todayISO() ? shiftCycle(base, freq, 1) : nextDueDate(report));
     if (!next) return null;
     const seriesId = report.seriesId || report.id;
     const exists = R.reports.some(
@@ -829,6 +865,15 @@
     }
   }
 
+  /* Gửi báo cáo xong thì hẹn luôn kỳ kế tiếp, không mở lại kỳ cũ. */
+  async function startNextCycle(report) {
+    if (!report || !isRecurring(report)) return null;
+    retireSeriesSiblings(report);
+    const reminder = cycleReminder(report);
+    if (reminder) await inheritFiles(report, reminder);
+    return reminder;
+  }
+
   async function completeReport(report) {
     if (!report) return;
     if (isDone(report)) {
@@ -839,13 +884,7 @@
     const now = new Date().toISOString();
     /* Chốt một kỳ là đóng luôn các bản trùng của cùng chuỗi, rồi mới hẹn kỳ tới. */
     if (isRecurring(report)) {
-      const key = seriesKey(report);
-      const due = reportDue(report);
-      R.reports.forEach((item) => {
-        if (item === report || isDone(item) || !isRecurring(item) || seriesKey(item) !== key) return;
-        if (due && reportDue(item) && reportDue(item) < due) return;
-        retireDuplicate(item, report);
-      });
+      retireSeriesSiblings(report);
       R.reports = sortReports(R.reports);
     }
     const reminder = cycleReminder(report);
@@ -2207,7 +2246,13 @@
       A.toast(err.message || "Chưa đồng bộ được trạng thái Đã gửi.", "error");
       return;
     }
-    if (live.frequency && live.frequency !== "none") autoAdvance();
+    if (live.frequency && live.frequency !== "none") {
+      const reminder = await startNextCycle(live).catch(() => null);
+      if (reminder) {
+        await push().catch(() => {});
+        A.toast(`Đã hẹn kỳ tới ${shortDate(reminder.dueDate)}.`, "info");
+      }
+    }
   }
 
   function sendZalo(report) {
