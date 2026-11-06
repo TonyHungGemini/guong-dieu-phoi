@@ -80,6 +80,7 @@
     aiError: "",
     dayStamp: "",
     rolling: false,
+    lastRollAt: 0,
   };
 
   /* ---------- tiện ích ---------- */
@@ -229,9 +230,12 @@
           retireDuplicate(report, keeper);
           count += 1;
         });
-        const done = members.find((report) => isDone(report) && reportDue(report) === reportDue(keeper));
-        if (done) {
-          retireDuplicate(keeper, done);
+        /* Chỉ kỳ thật đã chốt mới thay thế được bản mở; bản đã gộp (supersededBy) không tính. */
+        const settled = members.find(
+          (report) => isDone(report) && !report.supersededBy && reportDue(report) === reportDue(keeper)
+        );
+        if (settled) {
+          retireDuplicate(keeper, settled);
           open = [];
           count += 1;
         } else {
@@ -239,9 +243,10 @@
         }
       }
       if (open.length) continue;
-      const handled = members.filter((report) => isDone(report) && reportDue(report) && !report.supersededBy);
-      const pool = handled.length ? handled : members.filter((report) => isDone(report) && reportDue(report));
-      const anchor = pool.sort((a, b) => {
+      const completed = members.filter((report) => isDone(report) && reportDue(report));
+      const real = completed.filter((report) => !report.supersededBy);
+      /* Neo vào kỳ thật mới nhất, kể cả khi bản ghi đó từng bị gộp: kỳ kế tiếp phải sau nó. */
+      const anchor = (real.length ? real : completed).sort((a, b) => {
         const byDue = reportDue(b).localeCompare(reportDue(a));
         if (byDue) return byDue;
         const sent = String(b.lastSentAt || "").localeCompare(String(a.lastSentAt || ""));
@@ -338,6 +343,7 @@
         const next = rollReportToPeriod(report, today);
         if (next) count += 1;
       });
+      R.lastRollAt = Date.now();
       if (!count && !normalized) return 0;
       R.reports = sortReports(R.reports);
       broadcastReminders();
@@ -786,9 +792,12 @@
   }
 
   function touchDay() {
-    if (!R.loaded) return;
-    if (R.dayStamp === A.todayISO()) return;
-    rollRecurringReports({ notify: true });
+    if (!R.loaded || R.rolling) return;
+    const today = A.todayISO();
+    const newDay = R.dayStamp !== today;
+    /* Cùng ngày vẫn kiểm tra lại định kỳ để dữ liệu máy khác đã kịp đồng bộ. */
+    if (!newDay && R.lastRollAt && Date.now() - R.lastRollAt < 10 * 60 * 1000) return;
+    rollRecurringReports({ notify: newDay });
   }
 
   /* ---------- thao tác 1 chạm: hoàn thành / gia hạn ---------- */

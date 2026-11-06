@@ -1,4 +1,4 @@
-const VERSION = "1.8.7";
+const VERSION = "1.8.8";
 const CACHE = `guong-${VERSION}`;
 const SHELL = [
   "./",
@@ -28,12 +28,21 @@ const SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
+  /* Một tệp lỗi không được chặn bản cập nhật mới. */
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(SHELL))
+      .then((cache) =>
+        Promise.all(
+          SHELL.map((url) => cache.add(new Request(url, { cache: "reload" })).catch(() => null))
+        )
+      )
       .then(() => self.skipWaiting())
   );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
@@ -78,13 +87,11 @@ self.addEventListener("fetch", (event) => {
   }
 
   if (sameOrigin) {
+    /* Ưu tiên mạng để bản mới lên ngay; mất mạng thì lấy bản đã lưu. */
     event.respondWith(
-      caches.match(request).then((cached) => {
-        const network = fetch(request)
-          .then((response) => putInCache(request, response))
-          .catch(() => cached);
-        return cached || network;
-      })
+      fetch(request)
+        .then((response) => putInCache(request, response))
+        .catch(async () => (await caches.match(request)) || Response.error())
     );
     return;
   }

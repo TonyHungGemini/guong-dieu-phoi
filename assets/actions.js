@@ -1384,21 +1384,44 @@
       if (secure) {
         const register = async () => {
           try {
-            const reg = await navigator.serviceWorker.register("./sw.js");
+            const reg = await navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" });
             const hadController = Boolean(navigator.serviceWorker.controller);
             let reloading = false;
-            navigator.serviceWorker.addEventListener("controllerchange", () => {
-              if (!hadController || reloading) return;
+            let warned = false;
+            const reloadWhenFree = () => {
+              if (reloading) return;
               if (document.querySelector(".overlay")) {
-                A.toast("Đã có bản GUỒNG mới. Tải lại trang khi đóng cửa sổ để dùng bản mới.", "info");
+                if (!warned) {
+                  warned = true;
+                  A.toast("Đã có bản GUỒNG mới. Đóng cửa sổ đang mở để tự tải lại.", "info");
+                }
+                window.setTimeout(reloadWhenFree, 3000);
                 return;
               }
               reloading = true;
               location.reload();
+            };
+            navigator.serviceWorker.addEventListener("controllerchange", () => {
+              if (!hadController) return;
+              reloadWhenFree();
             });
-            const check = () => reg.update().catch(() => {});
-            setInterval(check, 30 * 60 * 1000);
+            reg.addEventListener("updatefound", () => {
+              const worker = reg.installing;
+              if (!worker) return;
+              worker.addEventListener("statechange", () => {
+                if (worker.state === "installed" && navigator.serviceWorker.controller) {
+                  worker.postMessage({ type: "SKIP_WAITING" });
+                }
+              });
+            });
+            const check = () => {
+              reg.update().catch(() => {});
+              if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+            };
+            check();
+            setInterval(check, 5 * 60 * 1000);
             window.addEventListener("online", check);
+            window.addEventListener("pageshow", check);
             document.addEventListener("visibilitychange", () => {
               if (document.visibilityState === "visible") check();
             });
