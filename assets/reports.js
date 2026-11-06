@@ -164,6 +164,57 @@
   function isDone(report) {
     return report.status === "Sent" || report.status === "Done";
   }
+  function isRecurring(report) {
+    return Boolean(report.frequency && report.frequency !== "none");
+  }
+  function seriesKey(report) {
+    return report.seriesId || report.id;
+  }
+  function reportDue(report) {
+    return report.dueDate || report.date || "";
+  }
+  /* Mỗi chuỗi định kỳ chỉ giữ một kỳ đang mở: hạn gần nhất, cùng hạn thì bản mới cập nhật. */
+  function activeOpen(list) {
+    return list.slice().sort((a, b) => {
+      const dueA = reportDue(a);
+      const dueB = reportDue(b);
+      if (dueA !== dueB) return dueA.localeCompare(dueB);
+      const updA = String(a.updatedAt || a.createdAt || "");
+      const updB = String(b.updatedAt || b.createdAt || "");
+      if (updA !== updB) return updB.localeCompare(updA);
+      return String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+    })[0] || null;
+  }
+  function retireDuplicate(report, keeper) {
+    report.status = "Done";
+    report.completedAt = report.completedAt || A.todayISO();
+    report.lastProcessedDate = A.todayISO();
+    report.supersededBy = keeper ? keeper.id : "";
+    report.updatedAt = new Date().toISOString();
+    logAction(report, "done", keeper ? `Gộp kỳ trùng vào «${keeper.title || "báo cáo"}» (${shortDate(reportDue(report))})` : "Đóng kỳ trùng");
+  }
+  /* Bản cũ (không có seriesId) và nhắc kỳ mới có thể cùng mở một kỳ — đóng bớt bản trùng. */
+  function dedupeSeries() {
+    if (!R.reports.length) return 0;
+    const groups = new Map();
+    R.reports.forEach((report) => {
+      if (!isRecurring(report) || isDone(report)) return;
+      const key = seriesKey(report);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(report);
+    });
+    let count = 0;
+    groups.forEach((open) => {
+      if (open.length < 2) return;
+      const keeper = activeOpen(open);
+      open.forEach((report) => {
+        if (report === keeper) return;
+        retireDuplicate(report, keeper);
+        count += 1;
+      });
+    });
+    return count;
+  }
   function inferFrequency(category) {
     if (category === "Báo cáo ngày") return "daily";
     if (category === "Báo cáo tuần") return "weekly";
@@ -235,16 +286,17 @@
     if (!R.loaded || !R.reports.length) return 0;
     const today = A.todayISO();
     R.dayStamp = today;
+    const merged = dedupeSeries();
     const openSeries = new Set();
     R.reports.forEach((report) => {
-      if (!report.frequency || report.frequency === "none") return;
-      if (!isDone(report)) openSeries.add(report.seriesId || report.id);
+      if (!isRecurring(report)) return;
+      if (!isDone(report)) openSeries.add(seriesKey(report));
     });
     let count = 0;
     R.reports.forEach((report) => {
-      if (!report.frequency || report.frequency === "none") return;
+      if (!isRecurring(report)) return;
       const done = isDone(report);
-      if (done && openSeries.has(report.seriesId || report.id)) return;
+      if (done && openSeries.has(seriesKey(report))) return;
       const next = rollReportToPeriod(report, today);
       if (!next) return;
       if (done) {
@@ -253,13 +305,13 @@
       }
       count += 1;
     });
-    if (!count) return 0;
+    if (!count && !merged) return 0;
     R.reports = sortReports(R.reports);
     broadcastReminders();
     push().catch(() => {});
     if (opts.silent) scheduleRefresh();
     else refresh();
-    if (opts.notify) {
+    if (opts.notify && count) {
       A.toast(`Đã tự chuyển ${count} báo cáo định kỳ sang kỳ mới.`, "success");
     }
     return count;
@@ -274,12 +326,22 @@
 
   /* ---------- nhắc báo cáo cho trang Tổng quan ---------- */
   function reminderSummary() {
-    const today = A.todayISO();
     const buckets = { today: [], tomorrow: [], late: [], week: [] };
+    const groups = new Map();
+    const loose = [];
     R.reports.forEach((report) => {
-      if (isDone(report)) return;
-      const iso = report.dueDate || report.date;
-      if (!iso) return;
+      if (isDone(report) || !reportDue(report)) return;
+      if (!isRecurring(report)) {
+        loose.push(report);
+        return;
+      }
+      const key = seriesKey(report);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(report);
+    });
+    const shown = loose.concat(Array.from(groups.values()).map(activeOpen));
+    shown.forEach((report) => {
+      const iso = reportDue(report);
       const gap = A.daysFromToday(iso);
       const item = {
         id: report.id,
@@ -775,6 +837,17 @@
     }
     const today = A.todayISO();
     const now = new Date().toISOString();
+    /* Chốt một kỳ là đóng luôn các bản trùng của cùng chuỗi, rồi mới hẹn kỳ tới. */
+    if (isRecurring(report)) {
+      const key = seriesKey(report);
+      const due = reportDue(report);
+      R.reports.forEach((item) => {
+        if (item === report || isDone(item) || !isRecurring(item) || seriesKey(item) !== key) return;
+        if (due && reportDue(item) && reportDue(item) < due) return;
+        retireDuplicate(item, report);
+      });
+      R.reports = sortReports(R.reports);
+    }
     const reminder = cycleReminder(report);
     report.status = "Done";
     report.completedAt = today;
@@ -2151,6 +2224,13 @@
     if (!next) {
       A.toast("Bật chu kỳ trước khi chuyển kỳ.", "error");
       return;
+    }
+    if (isRecurring(report)) {
+      const key = seriesKey(report);
+      R.reports.forEach((item) => {
+        if (item === report || isDone(item) || !isRecurring(item) || seriesKey(item) !== key) return;
+        retireDuplicate(item, report);
+      });
     }
     report.date = next;
     report.dueDate = next;
