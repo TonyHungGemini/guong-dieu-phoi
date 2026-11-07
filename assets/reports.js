@@ -712,6 +712,34 @@
     R.loaded = true;
   }
 
+  /* Hợp nhất hai danh sách báo cáo theo updatedAt — bản mới hơn thắng, hòa thì Done thắng.
+     Giữ nguyên bản chỉ có ở một phía, và loại bỏ bản nằm trong danh sách xoá. */
+  function mergeReports(local, incoming, tombstones) {
+    const deleted = new Set(tombstones || []);
+    const map = new Map();
+    (Array.isArray(local) ? local : []).forEach((r) => {
+      if (r && r.id && !deleted.has(r.id)) map.set(r.id, r);
+    });
+    (Array.isArray(incoming) ? incoming : []).forEach((r) => {
+      if (!r || !r.id || deleted.has(r.id)) return;
+      const existing = map.get(r.id);
+      if (!existing) {
+        map.set(r.id, r);
+        return;
+      }
+      const existingTime = new Date(existing.updatedAt || existing.date || 0).getTime();
+      const incomingTime = new Date(r.updatedAt || r.date || 0).getTime();
+      if (incomingTime > existingTime) {
+        map.set(r.id, { ...existing, ...r });
+      } else if (incomingTime === existingTime) {
+        const incomingDone = r.status === "Done" || r.status === "Sent";
+        const existingDone = existing.status === "Done" || existing.status === "Sent";
+        if (incomingDone && !existingDone) map.set(r.id, { ...existing, ...r });
+      }
+    });
+    return Array.from(map.values());
+  }
+
   async function push(deleted) {
     R.sync = "syncing";
     updateSyncBadge();
@@ -727,7 +755,7 @@
           lastUpdated: new Date().toISOString(),
         }),
       });
-      R.reports = sortReports(data.reports || R.reports);
+      R.reports = sortReports(mergeReports(R.reports, data.reports, data.deletedReportIds));
       R.refDocs = Array.isArray(data.refDocs) ? data.refDocs : R.refDocs;
       R.fileBlobs = Array.isArray(data.fileBlobs) ? data.fileBlobs : R.fileBlobs;
       R.auditLogs = Array.isArray(data.auditLogs) ? data.auditLogs : R.auditLogs;
@@ -764,7 +792,8 @@
           const payload = JSON.parse(event.data);
           if ((payload.type === "SYNC_INIT" || payload.type === "SYNC_UPDATE") && Array.isArray(payload.reports)) {
             const before = JSON.stringify(R.reports);
-            R.reports = sortReports(payload.reports);
+            /* Không thay toàn bộ: hợp nhất theo updatedAt để giữ thay đổi cục bộ chưa kịp đẩy lên. */
+            R.reports = sortReports(mergeReports(R.reports, payload.reports, payload.deletedReportIds));
             R.refDocs = Array.isArray(payload.refDocs) ? payload.refDocs : R.refDocs;
             R.fileBlobs = Array.isArray(payload.fileBlobs) ? payload.fileBlobs : R.fileBlobs;
             R.auditLogs = Array.isArray(payload.auditLogs) ? payload.auditLogs : R.auditLogs;
